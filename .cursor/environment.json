@@ -1,0 +1,19 @@
+{
+  "build": {
+    "context": ".",
+    "dockerfile": "Dockerfile"
+  },
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "Build (watch)",
+      "command": "npm run build -- --watch",
+      "description": "Vite build in watch mode for Chrome extension"
+    },
+    {
+      "name": "Tests (watch)",
+      "command": "npm run test:watch",
+      "description": "Vitest in watch mode (non-interactive)"
+    }
+  ]
+}

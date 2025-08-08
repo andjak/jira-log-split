@@ -1,0 +1,21 @@
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Tests / Coverage
+coverage/
+
+# Env files
+.env
+.env.*
+

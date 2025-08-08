@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Jira Smart Work Log</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background-color: #f8fafc;
+        }
+        .table-container {
+            max-height: calc(100vh - 110px);
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+        .day-cell {
+            min-width: 50px;
+            max-width: 50px;
+        }
+        .task-name {
+            min-width: 200px;
+        }
+        .cell-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .status-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+        }
+        .line-green {
+            background-color: #22c55e;
+        }
+        .line-yellow {
+            background-color: #facc15;
+        }
+        .line-mixed {
+            background: linear-gradient(to right, #22c55e 50%, #facc15 50%);
+        }
+        .summary-row td:first-child {
+            padding-left: 1.5rem;
+        }
+        .subsection-title {
+            position: sticky;
+            left: 0;
+            background-color: #f8fafc;
+            z-index: 5;
+        }
+        .subsection-header {
+            position: sticky;
+            top: 50px;
+            z-index: 10;
+        }
+        .total-highlight-missing {
+            background-color: #fef2f2;
+            color: #b91c1c;
+        }
+        .total-highlight-over {
+            background-color: #eff6ff;
+            color: #1d4ed8;
+        }
+        .day-highlight-missing {
+            background-color: #fee2e2;
+        }
+        .day-highlight-over {
+            background-color: #bfdbfe;
+        }
+        tr.hover\:bg-gray-50:hover .subsection-title {
+            background-color: #f9fafb;
+        }
+        .time-input {
+            width: 100%;
+            text-align: center;
+            background: transparent;
+            border: none;
+            padding: 0;
+            font-size: inherit;
+            font-weight: inherit;
+            min-width: 40px;
+        }
+        .time-input:focus {
+            ring: 0;
+        }
+        details>summary {
+            list-style: none;
+        }
+        details>summary::-webkit-details-marker {
+            display: none;
+        }
+        .total-cell,
+        .regular-task-total {
+            min-width: 60px;
+        }
+        .action-menu {
+            display: none;
+        }
+        .group:hover .action-menu,
+        .action-menu:hover {
+            display: block;
+        }
+        details[open] .action-menu {
+            display: block;
+        }
+        tr:hover .subsection-title,
+        .bg-white .subsection-title {
+            background-color: #fff;
+        }
+        tr.hover\:bg-gray-50:hover .subsection-title {
+            background-color: #f9fafb;
+        }
+        .subsection-header .subsection-title {
+            background-color: #fff;
+        }
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            background-color: #e2e8f0;
+            color: #475569;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .chip button {
+            margin-left: 0.5rem;
+            color: #94a3b8;
+        }
+        .chip button:hover {
+            color: #475569;
+        }
+    </style>
+</head>
+<body class="p-2">
+<div class="max-w-full mx-auto bg-white rounded-lg shadow-md p-4 relative" id="app">
+    <header class="flex justify-between items-center mb-4">
+        <h1 class="text-xl font-bold text-gray-800">Jira Smart Work Log</h1>
+        <div class="flex items-center space-x-2">
+            <details class="relative inline-block text-left">
+                <summary class="cursor-pointer list-none inline-flex w-full justify-center gap-x-1 rounded-md bg-white px-2 py-1.5 text-xs font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                    2 Weeks
+                    <svg aria-hidden="true" class="-mr-1 h-4 w-4 text-gray-400 transition-transform duration-200" fill="currentColor" viewBox="0 0 20 20">
+                        <path clip-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" fill-rule="evenodd"></path>
+                    </svg>
+                </summary>
+                <div aria-orientation="vertical" class="absolute right-0 z-20 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                    <div class="py-1" role="none">
+                        <a class="text-gray-700 block px-4 py-2 text-xs" href="#" id="menu-item-0" role="menuitem" tabindex="-1">This month</a>
+                        <a class="text-gray-700 block px-4 py-2 text-xs" href="#" id="menu-item-1" role="menuitem" tabindex="-1">Prev month</a>
+                        <a class="text-gray-700 block px-4 py-2 text-xs" href="#" id="menu-item-2" role="menuitem" tabindex="-1">This week</a>
+                        <a class="text-gray-700 block px-4 py-2 text-xs" href="#" id="menu-item-3" role="menuitem" tabindex="-1">Prev week</a>
+                        <a class="bg-gray-100 text-gray-900 block px-4 py-2 text-xs" href="#" id="menu-item-4" role="menuitem" tabindex="-1">2 weeks</a>
+                        <a class="text-gray-700 block px-4 py-2 text-xs" href="#" id="menu-item-5" role="menuitem" tabindex="-1">Prev 2 weeks</a>
+                        <div class="border-t border-gray-200 my-1"></div>
+                        <a class="text-gray-700 block px-4 py-2 text-xs" href="#" id="menu-item-6" role="menuitem" tabindex="-1">Custom Range</a>
+                    </div>
+                </div>
+            </details>
+            <button class="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md text-xs font-medium hover:bg-gray-200">Clear</button>
+            <button class="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md text-xs font-medium hover:bg-gray-200">Distribute Evenly</button>
+            <button class="bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium hover:bg-blue-700">Distribute based on activity</button>
+            <button class="bg-green-600 text-white px-4 py-1.5 rounded-md text-xs font-medium hover:bg-green-700">Save all</button>
+            <div class="h-6 w-px bg-gray-200"></div>
+            <button class="text-gray-500 hover:text-gray-700 p-1 rounded-md hover:bg-gray-100" id="settings-button" title="Settings">
+                <span class="material-icons text-xl align-middle">settings</span>
+            </button>
+        </div>
+    </header>
+    <div class="table-container">
+        <table class="w-full text-xs text-left text-gray-500">
+            <thead class="text-xs text-gray-700 uppercase sticky-header">
+            <tr>
+                <th class="py-2 px-3 subsection-title w-auto" scope="col">Task</th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Mon</div>
+                    <div class="font-bold text-base">01</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Tue</div>
+                    <div class="font-bold text-base">02</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Wed</div>
+                    <div class="font-bold text-base">03</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Thu</div>
+                    <div class="font-bold text-base">04</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Fri</div>
+                    <div class="font-bold text-base">05</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell bg-gray-100" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Sat</div>
+                    <div class="font-bold text-base">06</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell bg-gray-100" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Sun</div>
+                    <div class="font-bold text-base">07</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Mon</div>
+                    <div class="font-bold text-base">08</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Tue</div>
+                    <div class="font-bold text-base">09</div>
+                </th>
+                <th class="py-2 px-1 text-center day-cell" scope="col">
+                    <div class="font-normal text-gray-500 text-[10px]">Wed</div>
+                    <div class="font-bold text-base">10</div>
+                </th>
+                <th class="py-2 px-3 text-center total-cell" scope="col">Total</th>
+                <th class="py-2 px-1 text-center" scope="col"></th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr class="bg-white border-b border-gray-200 subsection-header">
+                <td class="py-1 px-3 font-medium text-gray-900 whitespace-nowrap bg-white sticky left-0 z-10" colspan="13">
+                    <h3 class="text-[10px] font-semibold text-gray-500 uppercase tracking-wider py-1">Vacations &amp; Days Off</h3>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 px-3 font-medium text-gray-900 subsection-title whitespace-normal">
+                    <span class="material-icons text-blue-500 align-middle mr-1.5 text-sm">beach_access</span>Vacation / Day Off
+                </td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="8h"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="8h"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="4h"/></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-3 text-center font-bold text-xs whitespace-normal">20h</td>
+                <td class="py-1 px-1 text-center relative">
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 subsection-header group">
+                <td class="py-1 px-3 font-medium text-gray-900 whitespace-nowrap bg-white sticky left-0 z-10" colspan="12">
+                    <h3 class="text-[10px] font-semibold text-gray-500 uppercase tracking-wider py-1">Meetings</h3>
+                </td>
+                <td class="py-1 px-3 text-right bg-white">
+                    <button class="text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span class="material-icons text-sm">delete</span>
+                    </button>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 px-3 font-medium text-gray-900 subsection-title whitespace-normal">
+                    <div class="flex items-center">
+                        <span class="material-icons text-purple-500 align-middle mr-1.5 text-sm">task_alt</span>
+                        <span class="truncate task-name">MEET-123 Stand-up (Daily)</span>
+                    </div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="15m"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="15m"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="15m"/></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="15m"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="15m"/></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="15m"/></td>
+                <td class="py-1 px-3 text-center font-bold text-xs whitespace-normal">1h 30m</td>
+                <td class="py-1 px-1 text-center relative">
+                    <details class="relative inline-block text-left">
+                        <summary class="cursor-pointer list-none">
+                            <span class="material-icons text-gray-400 hover:text-gray-600 text-base">more_vert</span>
+                        </summary>
+                        <div aria-labelledby="menu-button" aria-orientation="vertical" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                            <div class="py-1" role="none">
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-0" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">delete</span> Remove
+                                </a>
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-1" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">save</span> Save to Jira
+                                </a>
+                            </div>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 px-3 font-medium text-gray-900 subsection-title whitespace-normal">
+                    <div class="flex items-center">
+                        <span class="material-icons text-purple-500 align-middle mr-1.5 text-sm">task_alt</span>
+                        <span class="truncate task-name">MEET-124 Retrospective</span>
+                    </div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"><input class="time-input" type="text" value="1h"/></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-3 text-center font-bold text-xs whitespace-normal">1h</td>
+                <td class="py-1 px-1 text-center relative">
+                    <details class="relative inline-block text-left">
+                        <summary class="cursor-pointer list-none">
+                            <span class="material-icons text-gray-400 hover:text-gray-600 text-base">more_vert</span>
+                        </summary>
+                        <div aria-labelledby="menu-button" aria-orientation="vertical" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                            <div class="py-1" role="none">
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-0" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">delete</span> Remove
+                                </a>
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-1" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">save</span> Save to Jira
+                                </a>
+                            </div>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            <tr class="bg-white hover:bg-gray-50">
+                <td class="py-1 px-3 text-gray-500 subsection-title hover:text-blue-600 cursor-pointer text-xs whitespace-normal">
+                    + Add meeting
+                </td>
+                <td colspan="12"></td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 subsection-header">
+                <td class="py-1 px-3 font-medium text-gray-900 whitespace-nowrap bg-white sticky left-0 z-10" colspan="13">
+                    <h3 class="text-[10px] font-semibold text-gray-500 uppercase tracking-wider py-1">Worked On</h3>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 px-3 font-medium text-gray-900 subsection-title whitespace-normal">
+                    <div class="flex items-center">
+                        <span class="material-icons text-green-500 align-middle mr-1.5 text-sm">task_alt</span>
+                        <span class="truncate task-name">JIRA-1872 - Implement new dashboard</span>
+                    </div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center cell-container day-cell">
+                    <input class="time-input" type="text" value="2h 45m"/>
+                    <div class="status-line line-green"></div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell">
+                    <input class="time-input" type="text" value="3h"/>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-3 text-center regular-task-total text-xs whitespace-normal">
+                    5h 45m
+                </td>
+                <td class="py-1 px-1 text-center relative">
+                    <details class="relative inline-block text-left">
+                        <summary class="cursor-pointer list-none">
+                            <span class="material-icons text-gray-400 hover:text-gray-600 text-base">more_vert</span>
+                        </summary>
+                        <div aria-labelledby="menu-button" aria-orientation="vertical" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                            <div class="py-1" role="none">
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-0" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">delete</span> Remove
+                                </a>
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-1" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">save</span> Save to Jira
+                                </a>
+                            </div>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 px-3 font-medium text-gray-900 subsection-title whitespace-normal">
+                    <div class="flex items-center">
+                        <span class="material-icons text-red-500 align-middle mr-1.5 text-sm">bug_report</span>
+                        <span class="truncate task-name">JIRA-2337 - Fix login button style</span>
+                    </div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell">
+                    <input class="time-input" type="text" value="1h"/>
+                </td>
+                <td class="py-1 px-1 text-center day-cell">
+                    <input class="time-input" type="text" value="2h"/>
+                </td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center cell-container day-cell">
+                    <input class="time-input" type="text" value="3h"/>
+                    <div class="status-line line-mixed"></div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-3 text-center text-xs whitespace-normal">6h</td>
+                <td class="py-1 px-1 text-center relative">
+                    <details class="relative inline-block text-left">
+                        <summary class="cursor-pointer list-none">
+                            <span class="material-icons text-gray-400 hover:text-gray-600 text-base">more_vert</span>
+                        </summary>
+                        <div aria-labelledby="menu-button" aria-orientation="vertical" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                            <div class="py-1" role="none">
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-0" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">delete</span> Remove
+                                </a>
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-1" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">save</span> Save to Jira
+                                </a>
+                            </div>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 px-3 font-medium text-gray-900 subsection-title whitespace-normal">
+                    <div class="flex items-center">
+                        <span class="material-icons text-green-500 align-middle mr-1.5 text-sm">task_alt</span>
+                        <span class="truncate task-name">JIRA-2710 - Update CTA on homepage</span>
+                    </div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center cell-container day-cell">
+                    <input class="time-input" type="text" value="5h 15m"/>
+                    <div class="status-line line-yellow"></div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell">
+                    <input class="time-input" type="text" value="7h 45m"/>
+                </td>
+                <td class="py-1 px-1 text-center day-cell">
+                    <input class="time-input" type="text" value="7h 45m"/>
+                </td>
+                <td class="py-1 px-3 text-center regular-task-total text-xs whitespace-normal">
+                    20h 45m
+                </td>
+                <td class="py-1 px-1 text-center relative">
+                    <details class="relative inline-block text-left">
+                        <summary class="cursor-pointer list-none">
+                            <span class="material-icons text-gray-400 hover:text-gray-600 text-base">more_vert</span>
+                        </summary>
+                        <div aria-labelledby="menu-button" aria-orientation="vertical" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                            <div class="py-1" role="none">
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-0" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">delete</span> Remove
+                                </a>
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-1" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">save</span> Save to Jira
+                                </a>
+                            </div>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            <tr class="bg-white border-b border-gray-200 hover:bg-gray-50 group">
+                <td class="py-1 pl-2 pr-3 font-medium text-gray-900 subsection-title whitespace-normal border-l-4 border-yellow-400">
+                    <div class="flex items-center">
+                        <span class="material-icons text-blue-500 align-middle mr-1.5 text-sm">bookmark</span>
+                        <span class="truncate task-name">JIRA-2805 - Research new chart libraries</span>
+                    </div>
+                </td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center cell-container day-cell">
+                    <input class="time-input" type="text" value="1h"/>
+                    <div class="status-line line-yellow"></div>
+                </td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-100 day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-1 text-center day-cell"></td>
+                <td class="py-1 px-3 text-center text-xs whitespace-normal">1h</td>
+                <td class="py-1 px-1 text-center relative">
+                    <details class="relative inline-block text-left">
+                        <summary class="cursor-pointer list-none">
+                            <span class="material-icons text-gray-400 hover:text-gray-600 text-base">more_vert</span>
+                        </summary>
+                        <div aria-labelledby="menu-button" aria-orientation="vertical" class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none" role="menu" tabindex="-1">
+                            <div class="py-1" role="none">
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-0" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">delete</span> Remove
+                                </a>
+                                <a class="text-gray-700 block px-4 py-2 text-xs hover:bg-gray-100" href="#" id="menu-item-1" role="menuitem" tabindex="-1">
+                                    <span class="material-icons align-middle mr-2 text-sm">save</span> Save to Jira
+                                </a>
+                            </div>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            <tr class="bg-white hover:bg-gray-50">
+                <td class="py-1 px-3 text-gray-500 subsection-title hover:text-blue-600 cursor-pointer text-xs whitespace-normal">
+                    + Add Jira task
+                </td>
+                <td colspan="12"></td>
+            </tr>
+            </tbody>
+            <tfoot>
+            <tr class="bg-gray-100 text-gray-900 text-[11px]">
+                <td class="py-2 px-3 subsection-title font-bold whitespace-normal">Total (work)</td>
+                <td class="py-2 px-1 text-center day-cell font-medium whitespace-normal">0h</td>
+                <td class="py-2 px-1 text-center day-highlight-over day-cell font-medium whitespace-normal">8h 15m</td>
+                <td class="py-2 px-1 text-center day-highlight-missing day-cell font-medium whitespace-normal">3h</td>
+                <td class="py-2 px-1 text-center day-highlight-missing day-cell font-medium whitespace-normal">5h 15m</td>
+                <td class="py-2 px-1 text-center day-highlight-missing day-cell font-medium whitespace-normal">3h</td>
+                <td class="py-2 px-1 text-center bg-gray-200 day-cell font-medium"></td>
+                <td class="py-2 px-1 text-center bg-gray-200 day-cell font-medium"></td>
+                <td class="py-2 px-1 text-center day-highlight-over day-cell font-medium whitespace-normal">8h 30m</td>
+                <td class="py-2 px-1 text-center day-cell font-medium whitespace-normal">8h</td>
+                <td class="py-2 px-1 text-center day-cell font-medium whitespace-normal">8h</td>
+                <td class="py-2 px-3 text-center total-highlight-missing font-bold whitespace-normal">36h</td>
+                <td class="py-2 px-1"></td>
+            </tr>
+            <tr class="bg-gray-100 font-medium text-gray-600 text-[11px]">
+                <td class="py-1 px-3 subsection-title whitespace-normal">Difference</td>
+                <td class="py-1 px-1 text-center day-cell whitespace-normal">0h</td>
+                <td class="py-1 px-1 text-center text-blue-600 day-cell whitespace-normal">+15m</td>
+                <td class="py-1 px-1 text-center text-red-600 day-cell whitespace-normal">-5h</td>
+                <td class="py-1 px-1 text-center text-red-600 day-cell whitespace-normal">-2h 45m</td>
+                <td class="py-1 px-1 text-center text-red-600 day-cell whitespace-normal">-1h</td>
+                <td class="py-1 px-1 text-center bg-gray-200 day-cell"></td>
+                <td class="py-1 px-1 text-center bg-gray-200 day-cell"></td>
+                <td class="py-1 px-1 text-center text-blue-600 day-cell whitespace-normal">+30m</td>
+                <td class="py-1 px-1 text-center day-cell whitespace-normal">0h</td>
+                <td class="py-1 px-1 text-center day-cell whitespace-normal">0h</td>
+                <td class="py-1 px-3 text-center text-red-600 whitespace-normal">-8h</td>
+                <td class="py-1 px-1"></td>
+            </tr>
+            </tfoot>
+        </table>
+    </div>
+    <div class="hidden absolute top-0 right-0 bottom-0 bg-white shadow-lg z-30 w-96 p-6 overflow-y-auto transform transition-transform duration-300 ease-in-out translate-x-full" id="settings-panel">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-lg font-bold text-gray-800">Settings</h2>
+            <button class="text-gray-500 hover:text-gray-700" id="close-settings">
+                <span class="material-icons">close</span>
+            </button>
+        </div>
+        <div class="space-y-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-700" for="workday-length">Standard working-day length</label>
+                <div class="mt-1 relative rounded-md shadow-sm">
+                    <input class="block w-full pr-10 sm:text-sm border-gray-300 rounded-md" id="workday-length" name="workday-length" step="0.1" type="number" value="8"/>
+                    <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                        <span class="text-gray-500 sm:text-sm">h</span>
+                    </div>
+                </div>
+                <p class="mt-2 text-xs text-gray-500">Used in all “full day” and highlighting calculations.</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700" for="period-selector">Period selector options</label>
+                <select class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md" id="period-selector" name="period-selector">
+                    <option>This month</option>
+                    <option>Prev month</option>
+                    <option selected="">This week</option>
+                    <option>Prev week</option>
+                    <option>2 weeks</option>
+                    <option>Prev 2 weeks</option>
+                    <option>Custom Range</option>
+                </select>
+            </div>
+            <div class="flex items-center justify-between">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700" for="show-meetings">Show “Meetings &amp; fixed-time tasks” subsection</label>
+                    <p class="text-xs text-gray-500">Turning it OFF hides the Meetings block.</p>
+                </div>
+                <label class="flex items-center cursor-pointer" for="show-meetings">
+                    <div class="relative">
+                        <input checked="" class="sr-only" id="show-meetings" type="checkbox"/>
+                        <div class="block bg-gray-200 w-10 h-6 rounded-full"></div>
+                        <div class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition"></div>
+                    </div>
+                </label>
+                <style>
+                    input:checked~.dot {
+                        transform: translateX(100%);
+                        background-color: #4f46e5;
+                    }
+                    input:checked~.block {
+                        background-color: #c7d2fe;
+                    }
+                </style>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Exclude issue types from auto-fill</label>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <div class="chip">
+                        <span>Epic</span>
+                        <button type="button">
+                            <span class="material-icons text-sm">close</span>
+                        </button>
+                    </div>
+                    <input class="flex-grow text-xs border-0 border-b border-gray-300 focus:ring-0 focus:border-blue-500" placeholder="Add issue type..." type="text"/>
+                </div>
+                <p class="mt-2 text-xs text-gray-500">User can exclude any issue types from automatic distribution.</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Exclude projects from auto-fill</label>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <input class="flex-grow text-xs border-0 border-b border-gray-300 focus:ring-0 focus:border-blue-500" placeholder="Add project..." type="text"/>
+                </div>
+                <p class="mt-2 text-xs text-gray-500">User can exclude any projects from automatic distribution.</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Source of “Worked on” issue list</label>
+                <fieldset class="mt-2">
+                    <div class="space-y-2">
+                        <div class="flex items-center">
+                            <input checked="" class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300" id="source-profile" name="source" type="radio"/>
+                            <label class="ml-3 block text-sm text-gray-700" for="source-profile">Worked on list from My Profile</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300" id="source-activity" name="source" type="radio"/>
+                            <label class="ml-3 block text-sm text-gray-700" for="source-activity">Changed status or commented</label>
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Default initial distribution logic</label>
+                <fieldset class="mt-2">
+                    <div class="space-y-2">
+                        <div class="flex items-center">
+                            <input checked="" class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300" id="dist-evenly" name="distribution" type="radio"/>
+                            <label class="ml-3 block text-sm text-gray-700" for="dist-evenly">Distribute evenly</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300" id="dist-activity" name="distribution" type="radio"/>
+                            <label class="ml-3 block text-sm text-gray-700" for="dist-activity">Distribute based on activity</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300" id="dist-none" name="distribution" type="radio"/>
+                            <label class="ml-3 block text-sm text-gray-700" for="dist-none">No initial automatic distribution</label>
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+        </div>
+        <div class="mt-8 pt-6 border-t border-gray-200 flex justify-end space-x-2">
+            <button class="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" type="button">Cancel</button>
+            <button class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" type="submit">Save Settings</button>
+        </div>
+    </div>
+</div>
+<script>
+	document.addEventListener('DOMContentLoaded', () => {
+		const settingsButton = document.getElementById('settings-button');
+		const closeSettingsButton = document.getElementById('close-settings');
+		const settingsPanel = document.getElementById('settings-panel');
+		const appDiv = document.getElementById('app');
+		const openSettings = () => {
+			settingsPanel.classList.remove('hidden', 'translate-x-full');
+			settingsPanel.classList.add('translate-x-0');
+			appDiv.classList.add('overflow-hidden');
+			appDiv.insertAdjacentHTML('beforeend', '<div id="settings-overlay" class="absolute inset-0 bg-gray-500 bg-opacity-75 transition-opacity z-20"></div>');
+			document.getElementById('settings-overlay').addEventListener('click', closeSettings);
+		};
+		const closeSettings = () => {
+			settingsPanel.classList.add('translate-x-full');
+			settingsPanel.classList.remove('translate-x-0');
+			const overlay = document.getElementById('settings-overlay');
+			if(overlay) overlay.remove();
+			setTimeout(() => {
+				settingsPanel.classList.add('hidden');
+				appDiv.classList.remove('overflow-hidden');
+			}, 300);
+		};
+		settingsButton.addEventListener('click', openSettings);
+		closeSettingsButton.addEventListener('click', closeSettings);
+		const detailsElements = document.querySelectorAll('details');
+		const mainDropdown = document.querySelector('header details');
+		if (mainDropdown) {
+			const summary = mainDropdown.querySelector('summary');
+			summary.addEventListener('click', (event) => {
+				event.preventDefault();
+				if (mainDropdown.hasAttribute('open')) {
+					mainDropdown.removeAttribute('open');
+				} else {
+					detailsElements.forEach(d => d.removeAttribute('open'));
+					mainDropdown.setAttribute('open', '');
+				}
+			});
+			mainDropdown.addEventListener('toggle', () => {
+				const svg = summary.querySelector('svg');
+				if (mainDropdown.open) {
+					svg.classList.add('rotate-180');
+				} else {
+					svg.classList.remove('rotate-180');
+				}
+			});
+		}
+		const rowDropdowns = document.querySelectorAll('tbody details');
+		rowDropdowns.forEach(details => {
+			const summary = details.querySelector('summary');
+			summary.addEventListener('click', (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				detailsElements.forEach(d => {
+					if (d !== details) {
+						d.removeAttribute('open');
+					}
+				});
+				if (details.hasAttribute('open')) {
+					details.removeAttribute('open');
+				} else {
+					details.setAttribute('open', '');
+				}
+			});
+		});
+		document.addEventListener('click', (event) => {
+			const openDropdowns = document.querySelectorAll('details[open]');
+			openDropdowns.forEach(dropdown => {
+				if (!dropdown.contains(event.target)) {
+					dropdown.removeAttribute('open');
+				}
+			})
+		});
+	});
+</script>
+
+</body></html>

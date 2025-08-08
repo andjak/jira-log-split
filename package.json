@@ -1,0 +1,33 @@
+{
+  "name": "jira-log-split",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andjak/jira-log-split.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/andjak/jira-log-split/issues"
+  },
+  "homepage": "https://github.com/andjak/jira-log-split#readme",
+  "devDependencies": {
+    "@types/chrome": "^0.1.1",
+    "@types/node": "^24.2.1",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.2",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
