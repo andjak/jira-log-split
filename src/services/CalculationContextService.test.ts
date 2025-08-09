@@ -8,6 +8,7 @@ vi.mock('./SettingsService');
 describe('CalculationContextService', () => {
   let settingsServiceMock: Mocked<SettingsService>;
   let calculationContextService: CalculationContextService;
+  const monday = new Date('2023-10-30T00:00:00.000Z'); // fixed weekday (Monday)
 
   beforeEach(() => {
     settingsServiceMock = new (vi.mocked(SettingsService))() as Mocked<SettingsService>;
@@ -21,7 +22,7 @@ describe('CalculationContextService', () => {
     const context: DailyContext = { vacationHours: 0, meetingHours: 0, existingWorklogHours: 0, isPublicHoliday: false };
 
     // Act
-    const availableHours = await calculationContextService.getAvailableHours(new Date(), context);
+    const availableHours = await calculationContextService.getAvailableHours(monday, context);
 
     // Assert
     expect(availableHours).toBe(8);
@@ -32,7 +33,7 @@ describe('CalculationContextService', () => {
     const context: DailyContext = { vacationHours: 0, meetingHours: 0, existingWorklogHours: 0, isPublicHoliday: true };
 
     // Act
-    const availableHours = await calculationContextService.getAvailableHours(new Date(), context);
+    const availableHours = await calculationContextService.getAvailableHours(monday, context);
 
     // Assert
     expect(availableHours).toBe(0);
@@ -43,7 +44,7 @@ describe('CalculationContextService', () => {
     const context: DailyContext = { vacationHours: 3, meetingHours: 0, existingWorklogHours: 0, isPublicHoliday: false };
 
     // Act
-    const availableHours = await calculationContextService.getAvailableHours(new Date(), context);
+    const availableHours = await calculationContextService.getAvailableHours(monday, context);
 
     // Assert
     expect(availableHours).toBe(5); // 8 - 3
@@ -54,7 +55,7 @@ describe('CalculationContextService', () => {
     const context: DailyContext = { vacationHours: 0, meetingHours: 1.5, existingWorklogHours: 0, isPublicHoliday: false };
 
     // Act
-    const availableHours = await calculationContextService.getAvailableHours(new Date(), context);
+    const availableHours = await calculationContextService.getAvailableHours(monday, context);
 
     // Assert
     expect(availableHours).toBe(6.5); // 8 - 1.5
@@ -65,7 +66,7 @@ describe('CalculationContextService', () => {
     const context: DailyContext = { vacationHours: 2, meetingHours: 1, existingWorklogHours: 2.5, isPublicHoliday: false };
 
     // Act
-    const availableHours = await calculationContextService.getAvailableHours(new Date(), context);
+    const availableHours = await calculationContextService.getAvailableHours(monday, context);
 
     // Assert
     expect(availableHours).toBe(2.5); // 8 - 2 - 1 - 2.5
