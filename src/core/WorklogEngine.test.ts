@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mocked } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WorklogEngine } from './WorklogEngine';
 import { CalculationContextService } from '../services/CalculationContextService';
 import { IssueProviderService } from '../services/IssueProviderService';
@@ -12,21 +12,17 @@ const day1 = '2023-10-02';
 const day2 = '2023-10-03';
 
 describe('WorklogEngine', () => {
-  let calcMock: Mocked<CalculationContextService>;
-  let issuesMock: Mocked<IssueProviderService>;
+  let calcMock: vi.Mocked<CalculationContextService>;
+  let issuesMock: vi.Mocked<IssueProviderService>;
 
   beforeEach(() => {
-    calcMock = {
-      getAvailableHours: vi.fn(),
-    } as unknown as Mocked<CalculationContextService>;
-    issuesMock = {
-      getIssues: vi.fn(),
-    } as unknown as Mocked<IssueProviderService>;
+    calcMock = new (vi.mocked(CalculationContextService))() as unknown as vi.Mocked<CalculationContextService>;
+    issuesMock = new (vi.mocked(IssueProviderService))() as unknown as vi.Mocked<IssueProviderService>;
   });
 
   it('builds schedule by computing availability and applying strategy', async () => {
     // Arrange
-    const dailyContextProvider = async (_date: Date): Promise<DailyContext> => ({
+    const dailyContextProvider = async (): Promise<DailyContext> => ({
       vacationHours: 0,
       meetingHours: 0,
       existingWorklogHours: 0,
@@ -64,7 +60,7 @@ describe('WorklogEngine', () => {
   it('allocates nothing on zero-availability days and matches total availability in minutes', async () => {
     const availabilityMap: Record<string, number> = { [day1]: 0, [day2]: 6.5 };
 
-    const dailyContextProvider = async (_d: Date): Promise<DailyContext> => ({
+    const dailyContextProvider = async (): Promise<DailyContext> => ({
       vacationHours: 0,
       meetingHours: 0,
       existingWorklogHours: 0,
@@ -77,7 +73,7 @@ describe('WorklogEngine', () => {
     };
 
     // Mock getAvailableHours to reflect our map
-    calcMock.getAvailableHours.mockImplementation(async (d: Date) => {
+    calcMock.getAvailableHours.mockImplementation(async (d) => {
       const iso = d.toISOString().split('T')[0];
       return availabilityMap[iso] ?? 0;
     });

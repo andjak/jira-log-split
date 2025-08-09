@@ -31,6 +31,11 @@ export class IssueProviderService {
     return Object.fromEntries(Object.entries(perDay).map(([k, v]) => [k, Array.from(v)]));
   }
 
+  public async getCurrentUserAccountId(): Promise<string> {
+    const me = await this.jiraApiService.getCurrentUser();
+    return me.accountId;
+  }
+
   public async getIssues(period: Period): Promise<JiraIssue[]> {
     const issueSource = await this.settingsService.get('issueSource');
 
@@ -77,8 +82,6 @@ export class IssueProviderService {
 
     return isAuthor && isWithinPeriod && isStatusChange;
   }
-
-
 
   private async getIssuesFromMyProfile(period: Period): Promise<JiraIssue[]> {
     const [excludedProjects, excludedIssueTypes] = await Promise.all([

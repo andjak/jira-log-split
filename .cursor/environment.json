@@ -1,8 +1,4 @@
 {
-  "build": {
-    "context": ".",
-    "dockerfile": "Dockerfile"
-  },
   "install": "npm ci",
   "terminals": [
     {
@@ -16,5 +12,5 @@
       "description": "Vitest in watch mode (non-interactive)"
     }
   ],
-  "agentCanUpdateSnapshot": false
+  "agentCanUpdateSnapshot": true
 }

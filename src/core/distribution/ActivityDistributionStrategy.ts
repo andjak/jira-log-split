@@ -28,14 +28,14 @@ export class ActivityDistributionStrategy<Issue extends { key: string }>
 
     for (const day of dayOrder) {
       const hours = dailyAvailabilityHours[day] || 0;
-      let minutes = Math.max(0, Math.round(hours * 60));
+      const minutes = Math.max(0, Math.round(hours * 60));
       if (minutes <= 0) continue;
 
       const actives = (perDayActive[day] || []).filter((k) => issues.some((i) => i.key === k));
       if (actives.length === 0) continue;
 
       const base = this.roundDownTo(Math.floor(minutes / actives.length), this.roundTo);
-      let leftover = minutes - base * actives.length;
+      const leftover = minutes - base * actives.length;
 
       for (let idx = 0; idx < actives.length; idx++) {
         const key = actives[idx];

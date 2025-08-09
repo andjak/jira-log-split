@@ -29,8 +29,22 @@ export class WorklogEngine<Issue extends { key: string }> {
     // Fetch issues
     const issues = (await this.issueProvider.getIssues(period)) as unknown as Issue[];
 
+    // Optional context for strategies that use per-day activity
+    let context: unknown = undefined;
+    try {
+      const userId = await this.issueProvider.getCurrentUserAccountId();
+      const perDayActive = this.issueProvider.derivePerDayActive(
+        issues as any,
+        period,
+        userId,
+      );
+      context = { perDayActive } as unknown;
+    } catch {
+      // Best-effort: if anything fails, proceed without context
+    }
+
     // Apply distribution strategy
-    return this.strategy.distribute(issues, availabilityHours);
+    return this.strategy.distribute(issues, availabilityHours, context);
   }
 
   private enumerateDays(start: Date, end: Date): Date[] {
