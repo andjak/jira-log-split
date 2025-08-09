@@ -15,5 +15,6 @@
       "command": "npm run test:watch",
       "description": "Vitest in watch mode (non-interactive)"
     }
-  ]
+  ],
+  "agentCanUpdateSnapshot": false
 }
