@@ -118,6 +118,89 @@ describe('IssueProviderService', () => {
       expect(issues).toHaveLength(1);
       expect(issues[0].key).toBe('ACT-1');
     });
+
+    it('builds JQL with only time period and orders by updated when using activity source', async () => {
+      // Arrange
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'currentUser-abc';
+      const mockIssues: JiraIssue[] = [
+        {
+          id: '1',
+          key: 'DATE-ONLY-1',
+          fields: { summary: 'Updated by me', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' },
+          changelog: {
+            histories: [
+              { author: { accountId: currentUserAccountId, displayName: 'Me' }, created: '2023-10-10T12:00:00.000Z', items: [{ field: 'status', fieldtype: 'jira', fromString: 'To Do', toString: 'In Progress' }] },
+            ],
+          },
+        },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'excludedProjects') return ['SHOULD-NOT-BE-USED'];
+        if (key === 'excludedIssueTypes') return ['SHOULD-NOT-BE-USED'];
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+      (jiraApiServiceMock.fetchIssues as any).mockResolvedValue(mockIssues);
+
+      // Act
+      const issues = await issueProviderService.getIssues(period);
+
+      // Assert
+      expect(issues).toHaveLength(1);
+      expect((jiraApiServiceMock.fetchIssues as any)).toHaveBeenCalled();
+      const calledJql = (jiraApiServiceMock.fetchIssues as any).mock.calls[0][0] as string;
+      expect(calledJql).toContain('updated >= "2023-10-01"');
+      expect(calledJql).toContain('updated <= "2023-10-31"');
+      expect(calledJql).toContain('ORDER BY updated DESC');
+      // Should NOT include user involvement conditions or project/issuetype exclusions
+      expect(calledJql).not.toMatch(/assignee|reporter|creator|watcher|project not in|issuetype not in/);
+    });
+
+    it('includes issues when the user commented within the period', async () => {
+      // Arrange
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'currentUser-xyz';
+      const mockIssues: JiraIssue[] = [
+        {
+          id: '1',
+          key: 'CMNT-1',
+          fields: { summary: 'Has comment by me', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' },
+          changelog: {
+            histories: [
+              { author: { accountId: currentUserAccountId, displayName: 'Me' }, created: '2023-10-05T09:30:00.000Z', items: [{ field: 'comment', fieldtype: 'jira', fromString: null, toString: 'Added a comment' }] },
+            ],
+          },
+        },
+        {
+          id: '2',
+          key: 'CMNT-2',
+          fields: { summary: 'No comment by me', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' },
+          changelog: {
+            histories: [
+              { author: { accountId: 'someone-else', displayName: 'Other' }, created: '2023-10-05T10:00:00.000Z', items: [{ field: 'comment', fieldtype: 'jira', fromString: null, toString: 'Other comment' }] },
+            ],
+          },
+        },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'excludedProjects') return [];
+        if (key === 'excludedIssueTypes') return [];
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+      (jiraApiServiceMock.fetchIssues as any).mockResolvedValue(mockIssues);
+
+      // Act
+      const issues = await issueProviderService.getIssues(period);
+
+      // Assert
+      expect(issues.map(i => i.key)).toEqual(['CMNT-1']);
+    });
   });
 });
 

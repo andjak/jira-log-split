@@ -49,16 +49,24 @@ export class IssueProviderService {
   }
 
   private async getIssuesByActivity(period: Period): Promise<JiraIssue[]> {
-    const [user, allIssues] = await Promise.all([
+    // Build a JQL that restricts ONLY by the time period, then filter client-side
+    // to issues that the user updated or commented on within that period.
+    const [user] = await Promise.all([
       this.jiraApiService.getCurrentUser(),
-      this.getIssuesFromMyProfile(period) // First, get the base list
     ]);
 
-    return allIssues.filter(issue => {
-      if (!issue.changelog) return false;
+    const jqlFilters = [
+      `updated >= "${this.formatDateForJql(period.start)}"`,
+      `updated <= "${this.formatDateForJql(period.end)}"`,
+    ];
+    const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
 
-      return issue.changelog.histories.some(history =>
-        this.isRelevantActivity(history, user.accountId, period)
+    const allIssues = await this.jiraApiService.fetchIssues(jql);
+
+    return allIssues.filter((issue) => {
+      if (!issue.changelog) return false;
+      return issue.changelog.histories.some((history) =>
+        this.isRelevantActivity(history, user.accountId, period),
       );
     });
   }
@@ -77,10 +85,10 @@ export class IssueProviderService {
     const isAuthor = history.author.accountId === currentUserId;
     const isWithinPeriod = activityDate >= period.start && activityDate <= period.end;
 
-    // TODO: In the future, also check for comments.
-    const isStatusChange = history.items.some((item: any) => item.field.toLowerCase() === 'status');
+    // Consider any user-authored change (including comments) as relevant activity.
+    const hasAnyChange = Array.isArray(history.items) && history.items.length > 0;
 
-    return isAuthor && isWithinPeriod && isStatusChange;
+    return isAuthor && isWithinPeriod && hasAnyChange;
   }
 
   private async getIssuesFromMyProfile(period: Period): Promise<JiraIssue[]> {
