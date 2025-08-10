@@ -65,6 +65,12 @@ describe('IssueProviderService', () => {
 
       // Assert
       expect((jiraApiServiceMock.fetchIssues as any)).toHaveBeenCalled();
+      const calledJql = (jiraApiServiceMock.fetchIssues as any).mock.calls[0][0] as string;
+      // Assert ORDER BY is appended correctly (not joined with AND)
+      expect(calledJql.includes(' AND ORDER BY')).toBe(false);
+      expect(calledJql.endsWith(' ORDER BY updated DESC')).toBe(true);
+      expect(calledJql).toContain('updated >= "2023-10-01"');
+      expect(calledJql).toContain('updated <= "2023-10-31"');
       expect(issues).toEqual(mockIssues);
     });
   });

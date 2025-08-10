@@ -25,10 +25,12 @@ describe('JiraApiService.logWork', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
+        mode: 'cors',
       })
     );
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body);
     expect(body.timeSpentSeconds).toBe(5400);
     expect(typeof body.started).toBe('string');
     expect(body.started.startsWith('2023-10-02T09:30:00.000Z'.slice(0, 10))).toBe(true);

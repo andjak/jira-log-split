@@ -89,23 +89,21 @@ export class IssueProviderService {
       this.settingsService.get('excludedIssueTypes'),
     ]);
 
-    const jqlParts = [
+    const jqlFilters = [
       `updated >= "${this.formatDateForJql(period.start)}"`,
       `updated <= "${this.formatDateForJql(period.end)}"`,
       `(assignee in (currentUser()) OR reporter in (currentUser()) OR creator in (currentUser()) OR watcher in (currentUser()))`,
     ];
 
     if (excludedProjects.length > 0) {
-      jqlParts.push(`project not in ("${excludedProjects.join('", "')}")`);
+      jqlFilters.push(`project not in ("${excludedProjects.join('", "')}")`);
     }
 
     if (excludedIssueTypes.length > 0) {
-      jqlParts.push(`issuetype not in ("${excludedIssueTypes.join('", "')}")`);
+      jqlFilters.push(`issuetype not in ("${excludedIssueTypes.join('", "')}")`);
     }
 
-    jqlParts.push('ORDER BY updated DESC');
-
-    const jql = jqlParts.join(' AND ');
+    const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
     return this.jiraApiService.fetchIssues(jql);
   }
 

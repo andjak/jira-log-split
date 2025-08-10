@@ -63,10 +63,30 @@ export class JiraApiService {
       ...options.headers,
     };
 
-    const response = await fetch(url, { ...options, headers });
+    // Use browser session cookies; MV3 extension has host_permissions for cross-origin
+    const response = await fetch(url, {
+      credentials: 'include',
+      mode: 'cors',
+      ...options,
+      headers,
+    });
 
     if (!response.ok) {
-      throw new Error(`Jira API request failed: ${response.status} ${response.statusText}`);
+      let details = '';
+      try {
+        const data: any = await response.json();
+        if (Array.isArray(data?.errorMessages) && data.errorMessages.length > 0) {
+          details = ` - ${data.errorMessages.join('; ')}`;
+        } else if (typeof data?.message === 'string') {
+          details = ` - ${data.message}`;
+        }
+      } catch {
+        try {
+          const text = await response.text();
+          if (text) details = ` - ${text}`;
+        } catch {}
+      }
+      throw new Error(`Jira API request failed: ${response.status} ${response.statusText}${details}`);
     }
 
     // Handle responses with no content

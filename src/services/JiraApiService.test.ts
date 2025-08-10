@@ -32,6 +32,8 @@ describe('JiraApiService', () => {
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ jql, maxResults: 1000, expand: ['changelog'] }),
+          credentials: 'include',
+          mode: 'cors',
         })
       );
       expect(issues).toEqual(mockIssues);
@@ -45,6 +47,50 @@ describe('JiraApiService', () => {
 
       // Act & Assert
       await expect(jiraApiService.fetchIssues(jql)).rejects.toThrow('Jira API request failed: 401 Unauthorized');
+    });
+  });
+
+  describe('credentials and headers', () => {
+    it('uses credentials include for GET requests', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ accountId: 'x' }) });
+      await jiraApiService.getCurrentUser();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://my-jira.atlassian.net/rest/api/3/myself',
+        expect.objectContaining({ credentials: 'include', mode: 'cors' })
+      );
+    });
+  });
+
+  describe('error handling', () => {
+    it('includes Jira error messages from JSON body', async () => {
+      const jql = 'assignee = currentUser()';
+      const mockResponse = {
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: () => Promise.resolve({ errorMessages: ['Invalid JQL'] }),
+        text: () => Promise.resolve('{"errorMessages":["Invalid JQL"]}')
+      };
+      fetchMock.mockResolvedValue(mockResponse);
+
+      await expect(jiraApiService.fetchIssues(jql)).rejects.toThrow(
+        'Jira API request failed: 400 Bad Request - Invalid JQL'
+      );
+    });
+
+    it('falls back to text body when JSON parse fails', async () => {
+      const mockResponse = {
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: () => Promise.reject(new Error('Invalid JSON')),
+        text: () => Promise.resolve('Some HTML error page')
+      };
+      fetchMock.mockResolvedValue(mockResponse);
+
+      await expect(jiraApiService.getCurrentUser()).rejects.toThrow(
+        'Jira API request failed: 400 Bad Request - Some HTML error page'
+      );
     });
   });
 });
