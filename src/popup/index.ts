@@ -5,7 +5,9 @@ import { IssueProviderService } from '../services/IssueProviderService';
 import { WorklogEngine } from '../core/WorklogEngine';
 import { EvenDistributionStrategy } from '../core/distribution/EvenDistributionStrategy';
 import { ActivityDistributionStrategy } from '../core/distribution/ActivityDistributionStrategy';
+import { WorklogSubmissionService } from '../services/WorklogSubmissionService';
 import type { DailyContext } from '../core/app-types';
+import { detectJiraBaseUrl } from '../services/JiraUrlDetector';
 
 function prevMonthRange(): { start: Date; end: Date } {
   const now = new Date();
@@ -37,15 +39,7 @@ function prevWeekRange(): { start: Date; end: Date } {
   return { start, end };
 }
 
-function deriveBaseUrlFromTab(url: string): string | null {
-  try {
-    const u = new URL(url);
-    return `${u.protocol}//${u.host}`;
-  } catch (e) {
-    console.debug('Failed to derive base URL from tab', e);
-    return null;
-  }
-}
+// Removed unused deriveBaseUrlFromTab; URL detection is centralized in JiraUrlDetector
 
 async function buildEngineWithSettings(baseUrl: string) {
   const settings = new SettingsService();
@@ -85,38 +79,58 @@ async function buildEngineWithSettings(baseUrl: string) {
       break;
   }
 
-  return { engine, period };
+  return { engine, period, settings, jira };
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   const output = document.getElementById('output') as HTMLPreElement | null;
-  const button = document.getElementById('buildSchedule') as HTMLButtonElement | null;
+  const buildBtn = document.getElementById('buildSchedule') as HTMLButtonElement | null;
 
-  if (!button || !output) return;
+  if (!output) return;
 
-  button.addEventListener('click', async () => {
+  let cachedSchedule: Record<string, Record<string, number>> | null = null;
+  let submission: WorklogSubmissionService | null = null;
+
+  const ensureBaseUrl = async (): Promise<string> => detectJiraBaseUrl({ queryString: window.location.search });
+
+  const runBuild = async () => {
     try {
       output.textContent = 'Building...';
 
-      // Get current tab URL to infer Jira base URL
-      let baseUrl = 'https://example.atlassian.net';
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.url) {
-          const inferred = deriveBaseUrlFromTab(tab.url);
-          if (inferred) baseUrl = inferred;
-        }
-      } catch (e) {
-        console.debug('tabs.query failed', e);
-      }
-
-      const { engine, period } = await buildEngineWithSettings(baseUrl);
+      const baseUrl = await ensureBaseUrl();
+      const { engine, period, settings, jira } = await buildEngineWithSettings(baseUrl);
       const schedule = await engine.buildSchedule(period);
+      cachedSchedule = schedule;
+      submission = new WorklogSubmissionService(jira);
 
       output.textContent = JSON.stringify({ period, schedule }, null, 2);
+
+      // Add a Save button dynamically once we have a schedule
+      const actions = document.getElementById('actions');
+      if (actions && !document.getElementById('saveSchedule')) {
+        const btn = document.createElement('button');
+        btn.id = 'saveSchedule';
+        btn.textContent = 'Save schedule';
+        btn.addEventListener('click', async () => {
+          if (!cachedSchedule || !submission) return;
+          const hour = await settings.get('submissionStartHourUTC');
+          output.textContent = 'Saving...';
+          const result = await submission.submitSchedule(cachedSchedule, { startHourUTC: hour });
+          output.textContent = `Saved: ${result.successes}, Failed: ${result.failures}`;
+        });
+        actions.appendChild(btn);
+      }
     } catch (err) {
       output.textContent = `Error: ${String(err)}`;
     }
-  });
+  };
+
+  // Wire the existing button if present (dev convenience), but auto-run build on load
+  if (buildBtn) {
+    buildBtn.addEventListener('click', runBuild);
+  }
+
+  // Auto-run on load to behave like the dashboard view
+  void runBuild();
 });
 

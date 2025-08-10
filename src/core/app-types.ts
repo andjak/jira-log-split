@@ -11,6 +11,7 @@ export interface AppSettings {
   excludedProjects: string[];
   issueSource: 'myProfile' | 'activity';
   initialDistribution: 'even' | 'activity' | 'none';
+  submissionStartHourUTC: number;
 }
 
 /**
@@ -24,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   excludedProjects: [],
   issueSource: 'myProfile',
   initialDistribution: 'even',
+  submissionStartHourUTC: 9,
 };
 
 /**

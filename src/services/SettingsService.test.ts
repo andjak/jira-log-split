@@ -54,5 +54,18 @@ describe('SettingsService', () => {
       expect(storageMock.local.set).toHaveBeenCalledWith({ defaultPeriod: 'prevMonth' });
     });
   });
+
+  describe('submissionStartHourUTC', () => {
+    it('returns default 9 when unset', async () => {
+      storageMock.local.get.mockResolvedValue({});
+      const hour = await settingsService.get('submissionStartHourUTC');
+      expect(hour).toBe(9);
+    });
+
+    it('can be set and retrieved', async () => {
+      await settingsService.set('submissionStartHourUTC', 10);
+      expect(storageMock.local.set).toHaveBeenCalledWith({ submissionStartHourUTC: 10 });
+    });
+  });
 });
 
