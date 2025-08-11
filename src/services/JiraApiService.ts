@@ -1,4 +1,15 @@
 import { JiraIssue, JiraUser, JiraWorklog } from '../core/jira-types';
+import {
+  ADAPTIVE_DEFAULT_START_CONCURRENCY,
+  ADAPTIVE_FALLBACK_CONCURRENCY,
+  ADAPTIVE_MAX_CONCURRENCY,
+  ADAPTIVE_RAMP_UP_MIN_STEP,
+  ADAPTIVE_RAMP_UP_RATIO,
+  ADAPTIVE_THROTTLE_BACKOFF_RATIO,
+  JIRA_DEFAULT_PAGINATION_CONCURRENCY,
+  JIRA_DETAILED_FETCH_BATCH_SIZE,
+  JIRA_SEARCH_DESIRED_PAGE_SIZE,
+} from '../core/constants';
 import { SettingsService } from './SettingsService';
 
 export class JiraApiService {
@@ -20,7 +31,7 @@ export class JiraApiService {
    * Expands the changelog to get issue activity.
    */
   public async fetchIssues(jql: string): Promise<JiraIssue[]> {
-    const desiredPageSize = 1000;
+    const desiredPageSize = JIRA_SEARCH_DESIRED_PAGE_SIZE;
     const all: JiraIssue[] = [];
     // First request to discover actual page size limits and total
     const firstBody = {
@@ -55,7 +66,7 @@ export class JiraApiService {
     for (let s = pageSize; s < total; s += pageSize) starts.push(s);
 
     // Concurrency limit to avoid hammering Jira
-    const concurrency = 8;
+    const concurrency = JIRA_DEFAULT_PAGINATION_CONCURRENCY;
     let cursor = 0;
     const results: JiraIssue[][] = [];
 
@@ -102,7 +113,7 @@ export class JiraApiService {
    * Phase 1: Fetch minimal issue data fast (no expand, tiny fields)
    */
   public async fetchIssuesMinimal(jql: string): Promise<JiraIssue[]> {
-    const desiredPageSize = 1000;
+    const desiredPageSize = JIRA_SEARCH_DESIRED_PAGE_SIZE;
     const all: JiraIssue[] = [];
 
     const firstBody = {
@@ -131,6 +142,7 @@ export class JiraApiService {
     for (let s = pageSize; s < total; s += pageSize) starts.push(s);
 
     const { initialConcurrency } = await this.getStartingConcurrencyInfo();
+    await this.debugLog('phase-minimal-start', { initialConcurrency });
     const tasks: Array<() => Promise<JiraIssue[]>> = starts.map((startAt) => async () => {
       const body = {
         jql,
@@ -148,6 +160,7 @@ export class JiraApiService {
     const { results: pages } = await this.processQueueWithAdaptiveConcurrency(tasks, initialConcurrency);
     for (const p of pages) if (p && p.length) all.push(...p);
     await this.persistRampedUpConcurrencyIfSaved();
+    await this.debugLog('phase-minimal-end', { pages: pages.length });
     return all;
   }
 
@@ -157,12 +170,13 @@ export class JiraApiService {
    */
   public async fetchIssuesDetailedByKeys(keys: string[], options?: { batchSize?: number; concurrency?: number }): Promise<JiraIssue[]> {
     if (!keys || keys.length === 0) return [];
-    const batchSize = Math.max(1, options?.batchSize ?? 200);
-    const { initialConcurrency } = await this.getStartingConcurrencyInfo();
-    const concurrency = Math.max(1, options?.concurrency ?? initialConcurrency);
-
+    const batchSize = Math.max(1, options?.batchSize ?? JIRA_DETAILED_FETCH_BATCH_SIZE);
     const batches: string[][] = [];
     for (let i = 0; i < keys.length; i += batchSize) batches.push(keys.slice(i, i + batchSize));
+
+    const { initialConcurrency } = await this.getStartingConcurrencyInfo();
+    const concurrency = Math.max(1, options?.concurrency ?? initialConcurrency);
+    await this.debugLog('phase-detailed-start', { initialConcurrency, usedConcurrency: concurrency, batches: batches.length });
 
     const tasks: Array<() => Promise<JiraIssue[]>> = batches.map((chunk) => async () => {
       const jqlChunk = `key in (${chunk.map((k) => `"${k}"`).join(',')})`;
@@ -186,6 +200,7 @@ export class JiraApiService {
     } else {
       await this.updateAdaptiveConcurrency(concurrency);
     }
+    await this.debugLog('phase-detailed-end', { hadThrottle, finalConcurrency });
     const all: JiraIssue[] = [];
     for (const p of pages) if (p && p.length) all.push(...p);
     return all;
@@ -225,14 +240,36 @@ export class JiraApiService {
 
       if (throttled) {
         hadThrottle = true;
-        const reduced = Math.max(1, Math.floor(concurrency * 0.75));
-        concurrency = reduced === concurrency ? Math.max(1, concurrency - 1) : reduced;
+        const reduced = Math.max(1, Math.floor(concurrency * ADAPTIVE_THROTTLE_BACKOFF_RATIO));
+        const next = reduced === concurrency ? Math.max(1, concurrency - 1) : reduced;
+        await this.debugLog('throttle-reduce', { from: concurrency, to: next, failed: failed.length });
+        concurrency = next;
         pending.unshift(...failed);
         await this.updateAdaptiveConcurrency(concurrency);
       }
     }
 
     return { results, finalConcurrency: concurrency, hadThrottle };
+  }
+
+  private async debugLog(event: string, payload: any): Promise<void> {
+    try {
+      // Console for immediate visibility when developing
+      // eslint-disable-next-line no-console
+      console.info(`[AC] ${event}`, payload);
+      // Persist a short history for inspection in Application > Extension storage > Local
+      const host = new URL(this.baseUrl).host;
+      if (typeof chrome !== 'undefined' && (chrome as any)?.storage?.local) {
+        const key = 'adaptiveConcurrencyLastRun';
+        const current: any = await (chrome as any).storage.local.get([key]);
+        const arr: any[] = Array.isArray(current[key]) ? current[key] : [];
+        arr.push({ t: Date.now(), host, event, payload });
+        if (arr.length > 200) arr.splice(0, arr.length - 200);
+        await (chrome as any).storage.local.set({ [key]: arr });
+      }
+    } catch {
+      // ignore in tests / non-extension environments
+    }
   }
 
   private isThrottleError(err: any): boolean {
@@ -243,14 +280,14 @@ export class JiraApiService {
 
   private async getStartingConcurrencyInfo(): Promise<{ initialConcurrency: number; saved?: number }> {
     try {
-      if (!this.settings) return { initialConcurrency: 12 };
+      if (!this.settings) return { initialConcurrency: ADAPTIVE_FALLBACK_CONCURRENCY };
       const map = await this.settings.get('adaptiveConcurrencyByHost');
       const host = new URL(this.baseUrl).host;
       const saved = map[host];
       if (saved && saved > 0) return { initialConcurrency: saved, saved };
-      return { initialConcurrency: 100 };
+      return { initialConcurrency: ADAPTIVE_DEFAULT_START_CONCURRENCY };
     } catch {
-      return { initialConcurrency: 12 };
+      return { initialConcurrency: ADAPTIVE_FALLBACK_CONCURRENCY };
     }
   }
 
@@ -261,10 +298,13 @@ export class JiraApiService {
       const host = new URL(this.baseUrl).host;
       const saved = map[host];
       if (saved && saved > 0) {
-        const ramped = Math.min(100, Math.max(saved + 1, Math.floor(saved * 1.1)));
+        const ramped = Math.min(
+          ADAPTIVE_MAX_CONCURRENCY,
+          Math.max(saved + ADAPTIVE_RAMP_UP_MIN_STEP, Math.floor(saved * ADAPTIVE_RAMP_UP_RATIO)),
+        );
         await this.updateAdaptiveConcurrency(ramped);
       } else {
-        await this.updateAdaptiveConcurrency(100);
+        await this.updateAdaptiveConcurrency(ADAPTIVE_DEFAULT_START_CONCURRENCY);
       }
     } catch {
       // ignore

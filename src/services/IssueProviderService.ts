@@ -1,6 +1,7 @@
 import { JiraApiService } from './JiraApiService';
 import { SettingsService } from './SettingsService';
 import { JiraIssue } from '../core/jira-types';
+import { JIRA_DETAILED_FETCH_BATCH_SIZE } from '../core/constants';
 
 interface Period {
   start: Date;
@@ -61,8 +62,8 @@ export class IssueProviderService {
     const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
     const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
 
-    // Phase 2: fetch details for candidates in batches
-    const allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys, { batchSize: 200, concurrency: 12 });
+    // Phase 2: fetch details for candidates in batches; let JiraApiService pick adaptive concurrency
+    const allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys, { batchSize: JIRA_DETAILED_FETCH_BATCH_SIZE });
 
     // Compute user activity timestamps (updates via changelog, and comments)
     for (const issue of allIssues) {
