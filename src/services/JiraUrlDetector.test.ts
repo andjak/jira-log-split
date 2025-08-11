@@ -40,6 +40,26 @@ describe('JiraUrlDetector', () => {
       expect(url).toBe('https://zeta.atlassian.net');
     });
 
+    it('ignores invalid query origins (marketing apex) and falls back', async () => {
+      (global as any).chrome.cookies.getAll.mockResolvedValue([]);
+      (global as any).chrome.tabs.query.mockResolvedValue([]);
+      const url = await detectJiraBaseUrl({ queryString: '?baseUrl=https://atlassian.net' });
+      expect(url).toBe('https://example.atlassian.net');
+    });
+
+    it('picks a tenant host from cookies, ignoring apex and api/id subdomains', async () => {
+      (global as any).chrome.cookies.getAll
+        .mockResolvedValueOnce([
+          { domain: '.atlassian.net' },
+          { domain: '.api.atlassian.net' },
+          { domain: '.foo.atlassian.net' },
+          { domain: '.foo.atlassian.net' },
+        ])
+        .mockResolvedValueOnce([]);
+      const url = await detectJiraBaseUrl();
+      expect(url).toBe('https://foo.atlassian.net');
+    });
+
     it('falls back to cookies then tabs then default', async () => {
       // No query, cookies, or tabs
       const url = await detectJiraBaseUrl();
