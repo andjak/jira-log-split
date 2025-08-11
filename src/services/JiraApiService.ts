@@ -22,7 +22,9 @@ export class JiraApiService {
     const body = {
       jql,
       maxResults: 1000,
+      // Expand changelog; also request comments in fields to detect user comment activity.
       expand: ['changelog'], // Important for the "distribute by activity" feature
+      fields: ['summary', 'issuetype', 'project', 'updated', 'comment'],
     };
     const data = await this._request<{ issues: JiraIssue[] }>(`${this.JIRA_API_V2}/search`, {
       method: 'POST',
@@ -84,7 +86,9 @@ export class JiraApiService {
         try {
           const text = await response.text();
           if (text) details = ` - ${text}`;
-        } catch {}
+        } catch {
+          // no-op; keep details empty
+        }
       }
       throw new Error(`Jira API request failed: ${response.status} ${response.statusText}${details}`);
     }

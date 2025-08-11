@@ -17,9 +17,23 @@ export interface JiraIssue {
       name: string;
     };
     updated: string; // ISO 8601 date string
+    comment?: {
+      comments: JiraComment[];
+      maxResults: number;
+      total: number;
+      startAt: number;
+    };
   };
   changelog?: {
     histories: JiraChangelog[];
+  };
+  /**
+   * Derived metadata about the current user's activity on this issue within the selected period.
+   */
+  userActivity?: {
+    lastUpdatedByMeISO?: string; // ISO timestamp of last change authored by me
+    lastCommentedByMeISO?: string; // ISO timestamp of last comment authored by me
+    lastActivityAtISO?: string; // max of the above
   };
 }
 
@@ -38,6 +52,17 @@ export interface JiraChangelog {
     fromString: string | null;
     toString: string | null;
   }>;
+}
+
+export interface JiraComment {
+  id: string;
+  author: {
+    accountId: string;
+    displayName: string;
+  };
+  created: string; // ISO 8601 date string
+  updated?: string; // ISO 8601 date string
+  body?: unknown;
 }
 
 /**

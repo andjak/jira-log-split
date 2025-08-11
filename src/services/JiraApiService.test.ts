@@ -31,7 +31,7 @@ describe('JiraApiService', () => {
         'https://my-jira.atlassian.net/rest/api/2/search',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ jql, maxResults: 1000, expand: ['changelog'] }),
+          body: JSON.stringify({ jql, maxResults: 1000, expand: ['changelog'], fields: ['summary','issuetype','project','updated','comment'] }),
           credentials: 'include',
           mode: 'cors',
         })

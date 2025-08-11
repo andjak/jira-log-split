@@ -143,7 +143,7 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
-      (jiraApiServiceMock.fetchIssues as any).mockResolvedValue(mockIssues);
+      (jiraApiServiceMock.fetchIssues as any).mockImplementation(async () => mockIssues);
 
       // Act
       const issues = await issueProviderService.getIssues(period);
@@ -167,22 +167,40 @@ describe('IssueProviderService', () => {
         {
           id: '1',
           key: 'CMNT-1',
-          fields: { summary: 'Has comment by me', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' },
-          changelog: {
-            histories: [
-              { author: { accountId: currentUserAccountId, displayName: 'Me' }, created: '2023-10-05T09:30:00.000Z', items: [{ field: 'comment', fieldtype: 'jira', fromString: null, toString: 'Added a comment' }] },
-            ],
+          fields: {
+            summary: 'Has comment by me',
+            issuetype: { iconUrl: '', name: 'Task' },
+            project: { key: 'A', name: 'A' },
+            updated: '',
+            comment: {
+              comments: [
+                { id: 'c1', author: { accountId: currentUserAccountId, displayName: 'Me' }, created: '2023-10-05T09:30:00.000Z' },
+              ],
+              maxResults: 1,
+              total: 1,
+              startAt: 0,
+            },
           },
+          changelog: { histories: [] as any },
         },
         {
           id: '2',
           key: 'CMNT-2',
-          fields: { summary: 'No comment by me', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' },
-          changelog: {
-            histories: [
-              { author: { accountId: 'someone-else', displayName: 'Other' }, created: '2023-10-05T10:00:00.000Z', items: [{ field: 'comment', fieldtype: 'jira', fromString: null, toString: 'Other comment' }] },
-            ],
+          fields: {
+            summary: 'No comment by me',
+            issuetype: { iconUrl: '', name: 'Task' },
+            project: { key: 'A', name: 'A' },
+            updated: '',
+            comment: {
+              comments: [
+                { id: 'c2', author: { accountId: 'someone-else', displayName: 'Other' }, created: '2023-10-05T10:00:00.000Z' },
+              ],
+              maxResults: 1,
+              total: 1,
+              startAt: 0,
+            },
           },
+          changelog: { histories: [] as any },
         },
       ];
 
@@ -193,13 +211,57 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
-      (jiraApiServiceMock.fetchIssues as any).mockResolvedValue(mockIssues);
+      (jiraApiServiceMock.fetchIssues as any).mockImplementation(async () => mockIssues);
 
       // Act
       const issues = await issueProviderService.getIssues(period);
 
       // Assert
       expect(issues.map(i => i.key)).toEqual(['CMNT-1']);
+      // And ensure it added activity metadata
+      expect(issues[0].userActivity?.lastCommentedByMeISO).toBe('2023-10-05T09:30:00.000Z');
+      expect(issues[0].userActivity?.lastActivityAtISO).toBe('2023-10-05T09:30:00.000Z');
+    });
+
+    it('combines update and comment activity and sorts by user last activity desc', async () => {
+      // Arrange
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const me = 'me-1';
+      const mockIssues: JiraIssue[] = [
+        {
+          id: '1', key: 'UPD-OLD', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'P', name: 'P' }, updated: '' },
+          changelog: { histories: [ { author: { accountId: me, displayName: 'Me' }, created: '2023-10-05T08:00:00.000Z', items: [{ field: 'status', fieldtype: 'jira', fromString: 'To Do', toString: 'In Progress' }] } ] },
+          // no comments
+        },
+        {
+          id: '2', key: 'CMNT-NEW', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'P', name: 'P' }, updated: '', comment: { comments: [ { id: 'c1', author: { accountId: me, displayName: 'Me' }, created: '2023-10-10T12:00:00.000Z' } ], maxResults: 1, total: 1, startAt: 0 } },
+          changelog: { histories: [] as any },
+        },
+        {
+          id: '3', key: 'BOTH', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'P', name: 'P' }, updated: '', comment: { comments: [ { id: 'c1', author: { accountId: me, displayName: 'Me' }, created: '2023-10-09T12:00:00.000Z' } ], maxResults: 1, total: 1, startAt: 0 } },
+          changelog: { histories: [ { author: { accountId: me, displayName: 'Me' }, created: '2023-10-08T08:00:00.000Z', items: [{ field: 'status', fieldtype: 'jira', fromString: 'To Do', toString: 'In Progress' }] } ] },
+        },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'excludedProjects') return [];
+        if (key === 'excludedIssueTypes') return [];
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: me });
+      (jiraApiServiceMock.fetchIssues as any).mockImplementation(async () => mockIssues);
+
+      // Act
+      const issues = await issueProviderService.getIssues(period);
+
+      // Assert: sorted by last activity desc => CMNT-NEW (10th), BOTH (9th), UPD-OLD (5th)
+      expect(issues.map((i) => i.key)).toEqual(['CMNT-NEW', 'BOTH', 'UPD-OLD']);
+      // Metadata
+      const both = issues.find(i => i.key === 'BOTH')!;
+      expect(both.userActivity?.lastUpdatedByMeISO).toBe('2023-10-08T08:00:00.000Z');
+      expect(both.userActivity?.lastCommentedByMeISO).toBe('2023-10-09T12:00:00.000Z');
+      expect(both.userActivity?.lastActivityAtISO).toBe('2023-10-09T12:00:00.000Z');
     });
   });
 });
