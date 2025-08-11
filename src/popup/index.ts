@@ -79,6 +79,13 @@ async function buildEngineWithSettings(baseUrl: string) {
       break;
   }
 
+  // Ensure default issue source is 'activity' for initial load to test the new behavior
+  // If the stored setting differs, override for this session start
+  const issueSource = await settings.get('issueSource');
+  if (issueSource !== 'activity') {
+    await settings.set('issueSource', 'activity');
+  }
+
   return { engine, period, settings, jira };
 }
 

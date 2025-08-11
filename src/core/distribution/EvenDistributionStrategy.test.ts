@@ -6,11 +6,11 @@ const day2 = '2023-10-03';
 
 describe('EvenDistributionStrategy', () => {
   it('distributes 16h across 2 issues, keeping continuity and days order', () => {
-    const strategy = new EvenDistributionStrategy<any>({ roundMinutes: 5 });
-    const issues = [
-      { key: 'ISSUE-1', fields: { updated: '2023-09-01T00:00:00.000Z' } },
-      { key: 'ISSUE-2', fields: { updated: '2023-10-01T00:00:00.000Z' } },
-    ];
+  const strategy = new EvenDistributionStrategy<any>({ roundMinutes: 5 });
+  const issues = [
+    { key: 'ISSUE-1', fields: { updated: '2023-09-01T00:00:00.000Z' } },
+    { key: 'ISSUE-2', fields: { updated: '2023-10-01T00:00:00.000Z' } },
+  ];
 
     const availability = { [day1]: 8, [day2]: 8 };
 
@@ -22,11 +22,11 @@ describe('EvenDistributionStrategy', () => {
   });
 
   it('handles remainder minutes with 5-min rounding (65 min total, 2 issues)', () => {
-    const strategy = new EvenDistributionStrategy<any>({ roundMinutes: 5 });
-    const issues = [
-      { key: 'A', fields: { updated: '2023-09-01T00:00:00.000Z' } },
-      { key: 'B', fields: { updated: '2023-09-02T00:00:00.000Z' } },
-    ];
+  const strategy = new EvenDistributionStrategy<any>({ roundMinutes: 5 });
+  const issues = [
+    { key: 'A', fields: { updated: '2023-09-01T00:00:00.000Z' } },
+    { key: 'B', fields: { updated: '2023-09-02T00:00:00.000Z' }, userActivity: { lastActivityAtISO: '2023-09-01T12:00:00.000Z' } },
+  ];
     const availability = { [day1]: 65 / 60 };
 
     const schedule = strategy.distribute(issues as any, availability);

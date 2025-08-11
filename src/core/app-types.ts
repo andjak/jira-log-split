@@ -23,7 +23,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showMeetings: true,
   excludedIssueTypes: ['Epic'],
   excludedProjects: [],
-  issueSource: 'myProfile',
+  issueSource: 'activity',
   initialDistribution: 'even',
   submissionStartHourUTC: 9,
 };

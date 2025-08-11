@@ -19,18 +19,41 @@ export class JiraApiService {
    * Expands the changelog to get issue activity.
    */
   public async fetchIssues(jql: string): Promise<JiraIssue[]> {
-    const body = {
-      jql,
-      maxResults: 1000,
-      // Expand changelog; also request comments in fields to detect user comment activity.
-      expand: ['changelog'], // Important for the "distribute by activity" feature
-      fields: ['summary', 'issuetype', 'project', 'updated', 'comment'],
-    };
-    const data = await this._request<{ issues: JiraIssue[] }>(`${this.JIRA_API_V2}/search`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
-    return data.issues || [];
+    const pageSize = 1000;
+    const all: JiraIssue[] = [];
+    let startAt = 0;
+
+    // Loop until we fetched all pages or API stops returning items
+    for (;;) {
+      const body = {
+        jql,
+        maxResults: pageSize,
+        startAt,
+        // Expand changelog; also request comments in fields to detect user comment activity.
+        expand: ['changelog'], // Important for the "distribute by activity" feature
+        fields: ['summary', 'issuetype', 'project', 'updated', 'comment'],
+      } as const;
+
+      const data = await this._request<{ issues: JiraIssue[]; total?: number; startAt?: number; maxResults?: number }>(
+        `${this.JIRA_API_V2}/search`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      );
+
+      const issues = data.issues || [];
+      all.push(...issues);
+
+      // Single page or API not returning pagination metadata
+      if (typeof data.total !== 'number') break;
+      if (issues.length === 0) break;
+      if (all.length >= data.total) break;
+
+      startAt += issues.length;
+    }
+
+    return all;
   }
 
   public async getExistingWorklogs(issueIds: string[], startDate: Date, endDate: Date): Promise<JiraWorklog[]> {

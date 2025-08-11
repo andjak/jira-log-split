@@ -14,14 +14,18 @@ describe('JiraApiService', () => {
   });
 
   describe('fetchIssues', () => {
-    it('should fetch issues and expand the changelog', async () => {
+    it('should fetch issues and expand the changelog with pagination', async () => {
       // Arrange
       const jql = 'assignee = currentUser()';
-      const mockIssues: JiraIssue[] = [
+      const page1: JiraIssue[] = [
         { id: '1001', key: 'PROJ-1', fields: { summary: 'Test Issue 1', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'PROJ', name: 'Project' }, updated: '' } },
       ];
-      const mockResponse = { ok: true, json: () => Promise.resolve({ issues: mockIssues }) };
-      fetchMock.mockResolvedValue(mockResponse);
+      const page2: JiraIssue[] = [
+        { id: '1002', key: 'PROJ-2', fields: { summary: 'Test Issue 2', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'PROJ', name: 'Project' }, updated: '' } },
+      ];
+      const resp1 = { ok: true, json: () => Promise.resolve({ issues: page1, total: 2, startAt: 0, maxResults: 1 }) };
+      const resp2 = { ok: true, json: () => Promise.resolve({ issues: page2, total: 2, startAt: 1, maxResults: 1 }) };
+      fetchMock.mockResolvedValueOnce(resp1).mockResolvedValueOnce(resp2);
 
       // Act
       const issues = await jiraApiService.fetchIssues(jql);
@@ -31,12 +35,21 @@ describe('JiraApiService', () => {
         'https://my-jira.atlassian.net/rest/api/2/search',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ jql, maxResults: 1000, expand: ['changelog'], fields: ['summary','issuetype','project','updated','comment'] }),
+          body: JSON.stringify({ jql, maxResults: 1000, startAt: 0, expand: ['changelog'], fields: ['summary','issuetype','project','updated','comment'] }),
           credentials: 'include',
           mode: 'cors',
         })
       );
-      expect(issues).toEqual(mockIssues);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://my-jira.atlassian.net/rest/api/2/search',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ jql, maxResults: 1000, startAt: 1, expand: ['changelog'], fields: ['summary','issuetype','project','updated','comment'] }),
+          credentials: 'include',
+          mode: 'cors',
+        })
+      );
+      expect(issues).toEqual([...page1, ...page2]);
     });
 
     it('should throw an error if the network response is not ok', async () => {
