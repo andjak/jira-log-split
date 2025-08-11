@@ -1,6 +1,7 @@
 import { JiraApiService } from './JiraApiService';
 import { SettingsService } from './SettingsService';
 import { JiraIssue } from '../core/jira-types';
+import { JIRA_DETAILED_FETCH_BATCH_SIZE } from '../core/constants';
 
 interface Period {
   start: Date;
@@ -49,16 +50,34 @@ export class IssueProviderService {
   }
 
   private async getIssuesByActivity(period: Period): Promise<JiraIssue[]> {
-    // JQL with ONLY date range, ordered by updated; comments fetched via fields.
+    // Phase 1: fetch minimal candidates using only the time window
     const currentUser = await this.jiraApiService.getCurrentUser();
 
     const jqlFilters = [
       `updated >= "${this.formatDateForJql(period.start)}"`,
       `updated <= "${this.formatDateForJql(period.end)}"`,
     ];
+    // Try to prefilter by projects where user can act (reduces detailed fetch cost)
+    try {
+      // Jira permissions: ADD_COMMENTS, EDIT_ISSUES, WORK_ON_ISSUES (instead of ADD_WORKLOGS which is not a permission key)
+      const allowedProjects = await this.jiraApiService.getProjectsWhereUserHasAnyPermission([
+        'ADD_COMMENTS',
+        'EDIT_ISSUES',
+        'WORK_ON_ISSUES',
+      ]);
+      if (allowedProjects.length > 0) {
+        jqlFilters.push(`project in ("${allowedProjects.join('", "')}")`);
+      }
+    } catch {
+      // ignore permission prefilter errors
+    }
     const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
 
-    const allIssues = await this.jiraApiService.fetchIssues(jql);
+    const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
+    const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
+
+    // Phase 2: fetch details for candidates in batches; let JiraApiService pick adaptive concurrency
+    const allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys, { batchSize: JIRA_DETAILED_FETCH_BATCH_SIZE });
 
     // Compute user activity timestamps (updates via changelog, and comments)
     for (const issue of allIssues) {
@@ -84,22 +103,7 @@ export class IssueProviderService {
     return withActivity;
   }
 
-  /**
-   * Checks if a single changelog history item constitutes relevant activity
-   * by the user within the given period.
-   *
-   * @param history The changelog history item.
-   * @param currentUserId The ID of the current user.
-   * @param period The date range to check against.
-   * @returns True if the activity is relevant, false otherwise.
-   */
-  private isRelevantActivity(history: any, currentUserId: string, period: Period): boolean {
-    const activityDate = new Date(history.created);
-    const isAuthor = history.author.accountId === currentUserId;
-    const isWithinPeriod = activityDate >= period.start && activityDate <= period.end;
-    const hasAnyChange = Array.isArray(history.items) && history.items.length > 0;
-    return isAuthor && isWithinPeriod && hasAnyChange;
-  }
+  // Removed unused helper: isRelevantActivity
 
   private findLastChangeByUser(issue: JiraIssue, currentUserId: string, period: Period): string | null {
     const histories = issue.changelog?.histories ?? [];

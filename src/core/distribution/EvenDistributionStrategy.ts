@@ -4,7 +4,7 @@ interface StrategyOptions {
   roundMinutes: number; // e.g. 5
 }
 
-export class EvenDistributionStrategy<Issue extends { key: string; fields?: { updated?: string } }>
+export class EvenDistributionStrategy<Issue extends { key: string; fields?: { updated?: string }; userActivity?: { lastActivityAtISO?: string } }>
   implements DistributionStrategy<Issue>
 {
   private readonly roundTo: number;
@@ -25,11 +25,15 @@ export class EvenDistributionStrategy<Issue extends { key: string; fields?: { up
     const totalAvailable = Object.values(availabilityMinutes).reduce((a, b) => a + b, 0);
     if (totalAvailable === 0 || issues.length === 0) return {};
 
-    // Older updated issues first (earlier in period)
+    // Prefer user's last activity if available; fall back to issue's updated time
     const sortedIssues = [...issues].sort((a, b) => {
-      const ua = a.fields?.updated ? Date.parse(a.fields.updated) : 0;
-      const ub = b.fields?.updated ? Date.parse(b.fields.updated) : 0;
-      return ua - ub;
+      const aTs = a.userActivity?.lastActivityAtISO
+        ? Date.parse(a.userActivity.lastActivityAtISO)
+        : (a.fields?.updated ? Date.parse(a.fields.updated) : 0);
+      const bTs = b.userActivity?.lastActivityAtISO
+        ? Date.parse(b.userActivity.lastActivityAtISO)
+        : (b.fields?.updated ? Date.parse(b.fields.updated) : 0);
+      return aTs - bTs; // earlier first
     });
 
     const perIssueRaw = totalAvailable / sortedIssues.length;
