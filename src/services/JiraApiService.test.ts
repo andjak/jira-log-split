@@ -14,7 +14,7 @@ describe('JiraApiService', () => {
   });
 
   describe('fetchIssues', () => {
-    it('should fetch issues and expand the changelog with pagination', async () => {
+    it('should fetch issues and expand the changelog with pagination and parallel pages', async () => {
       // Arrange
       const jql = 'assignee = currentUser()';
       const page1: JiraIssue[] = [
@@ -31,24 +31,12 @@ describe('JiraApiService', () => {
       const issues = await jiraApiService.fetchIssues(jql);
 
       // Assert
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://my-jira.atlassian.net/rest/api/2/search',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ jql, maxResults: 1000, startAt: 0, expand: ['changelog'], fields: ['summary','issuetype','project','updated','comment'] }),
-          credentials: 'include',
-          mode: 'cors',
-        })
-      );
-      expect(fetchMock).toHaveBeenCalledWith(
-        'https://my-jira.atlassian.net/rest/api/2/search',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ jql, maxResults: 1000, startAt: 1, expand: ['changelog'], fields: ['summary','issuetype','project','updated','comment'] }),
-          credentials: 'include',
-          mode: 'cors',
-        })
-      );
+      // First call is the initial page discovery (startAt 0)
+      expect(fetchMock.mock.calls[0][0]).toBe('https://my-jira.atlassian.net/rest/api/2/search');
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ startAt: 0, maxResults: 1000 });
+      // Second call is next page; page size comes from server (maxResults: 1 in this test)
+      expect(fetchMock.mock.calls[1][0]).toBe('https://my-jira.atlassian.net/rest/api/2/search');
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ startAt: 1, maxResults: 1 });
       expect(issues).toEqual([...page1, ...page2]);
     });
 

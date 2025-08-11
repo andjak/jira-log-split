@@ -43,7 +43,7 @@ function prevWeekRange(): { start: Date; end: Date } {
 
 async function buildEngineWithSettings(baseUrl: string) {
   const settings = new SettingsService();
-  const jira = new JiraApiService(baseUrl);
+  const jira = new JiraApiService(baseUrl, settings);
   const calc = new CalculationContextService(settings);
   const issues = new IssueProviderService(jira, settings);
 

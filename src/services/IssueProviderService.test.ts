@@ -13,6 +13,8 @@ describe('IssueProviderService', () => {
     // Plain object mocks
     jiraApiServiceMock = {
       fetchIssues: vi.fn(),
+      fetchIssuesMinimal: vi.fn(),
+      fetchIssuesDetailedByKeys: vi.fn(),
       getCurrentUser: vi.fn(),
     } as unknown as JiraApiService;
 
@@ -109,7 +111,8 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
-      (jiraApiServiceMock.fetchIssues as any).mockResolvedValue(mockIssues);
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue(mockIssues);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue(mockIssues);
 
       // Act
       const issues = await issueProviderService.getIssues(period);
@@ -143,15 +146,16 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
-      (jiraApiServiceMock.fetchIssues as any).mockImplementation(async () => mockIssues);
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockImplementation(async () => mockIssues);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockImplementation(async () => mockIssues);
 
       // Act
       const issues = await issueProviderService.getIssues(period);
 
       // Assert
       expect(issues).toHaveLength(1);
-      expect((jiraApiServiceMock.fetchIssues as any)).toHaveBeenCalled();
-      const calledJql = (jiraApiServiceMock.fetchIssues as any).mock.calls[0][0] as string;
+      expect((jiraApiServiceMock.fetchIssuesMinimal as any)).toHaveBeenCalled();
+      const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
       expect(calledJql).toContain('updated >= "2023-10-01"');
       expect(calledJql).toContain('updated <= "2023-10-31"');
       expect(calledJql).toContain('ORDER BY updated DESC');
@@ -211,7 +215,8 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
-      (jiraApiServiceMock.fetchIssues as any).mockImplementation(async () => mockIssues);
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockImplementation(async () => mockIssues);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockImplementation(async () => mockIssues);
 
       // Act
       const issues = await issueProviderService.getIssues(period);
@@ -250,7 +255,8 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: me });
-      (jiraApiServiceMock.fetchIssues as any).mockImplementation(async () => mockIssues);
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockImplementation(async () => mockIssues);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockImplementation(async () => mockIssues);
 
       // Act
       const issues = await issueProviderService.getIssues(period);

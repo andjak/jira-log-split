@@ -12,6 +12,7 @@ export interface AppSettings {
   issueSource: 'myProfile' | 'activity';
   initialDistribution: 'even' | 'activity' | 'none';
   submissionStartHourUTC: number;
+  adaptiveConcurrencyByHost: Record<string, number>;
 }
 
 /**
@@ -26,6 +27,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   issueSource: 'activity',
   initialDistribution: 'even',
   submissionStartHourUTC: 9,
+  adaptiveConcurrencyByHost: {},
 };
 
 /**
