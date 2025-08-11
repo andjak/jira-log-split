@@ -27,4 +27,7 @@ export const JIRA_DEFAULT_PAGINATION_CONCURRENCY = 8;
 // Batch size for detailed Phase 2 fetch (keys -> changelog/comments)
 export const JIRA_DETAILED_FETCH_BATCH_SIZE = 200;
 
+// TTL for caching permission-derived project filters (milliseconds)
+export const PERMISSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 

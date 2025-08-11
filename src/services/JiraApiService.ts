@@ -8,6 +8,7 @@ import {
   ADAPTIVE_THROTTLE_BACKOFF_RATIO,
   JIRA_DEFAULT_PAGINATION_CONCURRENCY,
   JIRA_DETAILED_FETCH_BATCH_SIZE,
+  PERMISSIONS_CACHE_TTL_MS,
   JIRA_SEARCH_DESIRED_PAGE_SIZE,
 } from '../core/constants';
 import { SettingsService } from './SettingsService';
@@ -272,6 +273,25 @@ export class JiraApiService {
     }
   }
 
+  // --- Small cache for permission-derived project lists ---
+  private async getPermissionsCache(): Promise<Record<string, { ts: number; keys: string[] }>> {
+    try {
+      const key = 'adaptivePermissionsCache';
+      const data: any = await (chrome as any)?.storage?.local?.get?.([key]);
+      return (data && data[key]) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  private async setPermissionsCache(cache: Record<string, { ts: number; keys: string[] }>): Promise<void> {
+    try {
+      await (chrome as any)?.storage?.local?.set?.({ adaptivePermissionsCache: cache });
+    } catch {
+      // ignore
+    }
+  }
+
   private isThrottleError(err: any): boolean {
     if (!err) return false;
     const msg = String(err?.message || err);
@@ -391,6 +411,62 @@ export class JiraApiService {
     }
 
     return response.json() as Promise<T>;
+  }
+
+  // --- Projects and permissions ---
+
+  /**
+   * Fetches all projects visible to the current user. Returns minimal {id, key} pairs.
+   */
+  public async fetchAllProjects(): Promise<Array<{ id: string; key: string }>> {
+    const pageSize = 50;
+    const all: Array<{ id: string; key: string }> = [];
+    let startAt = 0;
+    for (;;) {
+      const data = await this._request<{ values: Array<{ id: string; key: string }>; total?: number; isLast?: boolean }>(
+        `${this.JIRA_API_V3}/project/search?startAt=${startAt}&maxResults=${pageSize}`,
+      );
+      const values = data.values || [];
+      all.push(...values.map((p) => ({ id: String(p.id), key: p.key })));
+      if (values.length === 0 || (data as any).isLast === true) break;
+      startAt += values.length;
+    }
+    return all;
+  }
+
+  /**
+   * Returns project keys where the current user has at least one of the requested permissions.
+   * Example permissions: 'ADD_COMMENTS', 'EDIT_ISSUES', 'ADD_WORKLOGS'
+   */
+  public async getProjectsWhereUserHasAnyPermission(permissions: string[]): Promise<string[]> {
+    const host = new URL(this.baseUrl).host;
+    const cacheKey = `${host}::${permissions.join('+')}`;
+    const cache = await this.getPermissionsCache();
+    const now = Date.now();
+    const ttl = PERMISSIONS_CACHE_TTL_MS;
+    const cached = cache[cacheKey];
+    if (cached && now - cached.ts < ttl) {
+      return cached.keys.slice();
+    }
+
+    const projects = await this.fetchAllProjects();
+    if (projects.length === 0) return [];
+    const tasks = projects.map((p) => async () => {
+      const params = new URLSearchParams();
+      params.set('projectId', p.id);
+      if (permissions.length > 0) params.set('permissions', permissions.join(','));
+      const data = await this._request<{ permissions: Record<string, { havePermission: boolean }> }>(
+        `${this.JIRA_API_V3}/mypermissions?${params.toString()}`,
+      );
+      const perms = data.permissions || {};
+      const hasAny = permissions.some((k) => perms[k]?.havePermission === true);
+      return hasAny ? p.key : null;
+    });
+    const { results } = await this.processQueueWithAdaptiveConcurrency(tasks, (await this.getStartingConcurrencyInfo()).initialConcurrency);
+    const allowed = (results as Array<string | null>).filter((k): k is string => Boolean(k));
+    cache[cacheKey] = { ts: now, keys: allowed };
+    await this.setPermissionsCache(cache);
+    return allowed;
   }
 }
 

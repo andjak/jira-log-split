@@ -15,6 +15,7 @@ describe('IssueProviderService', () => {
       fetchIssues: vi.fn(),
       fetchIssuesMinimal: vi.fn(),
       fetchIssuesDetailedByKeys: vi.fn(),
+      getProjectsWhereUserHasAnyPermission: vi.fn(),
       getCurrentUser: vi.fn(),
     } as unknown as JiraApiService;
 
@@ -146,6 +147,7 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+      (jiraApiServiceMock.getProjectsWhereUserHasAnyPermission as any).mockResolvedValue([]);
       (jiraApiServiceMock.fetchIssuesMinimal as any).mockImplementation(async () => mockIssues);
       (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockImplementation(async () => mockIssues);
 
@@ -161,6 +163,52 @@ describe('IssueProviderService', () => {
       expect(calledJql).toContain('ORDER BY updated DESC');
       // Should NOT include user involvement conditions or project/issuetype exclusions
       expect(calledJql).not.toMatch(/assignee|reporter|creator|watcher|project not in|issuetype not in/);
+    });
+
+    it('includes project prefilter when user has actionable permissions', async () => {
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'currentUser-abc';
+      const mockIssues: JiraIssue[] = [
+        { id: '1', key: 'DATE-ONLY-1', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+      (jiraApiServiceMock.getProjectsWhereUserHasAnyPermission as any).mockResolvedValue(['PROJ1', 'PROJ2']);
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue(mockIssues);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue(mockIssues);
+
+      await issueProviderService.getIssues(period);
+
+      // Ensures valid permission keys are requested
+      const calledWith = (jiraApiServiceMock.getProjectsWhereUserHasAnyPermission as any).mock.calls[0][0] as string[];
+      expect(calledWith.sort()).toEqual(['ADD_COMMENTS','EDIT_ISSUES','WORK_ON_ISSUES'].sort());
+      const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
+      expect(calledJql).toMatch(/project in \("PROJ1", "PROJ2"\)/);
+    });
+
+    it('falls back without project prefilter when permission fetch fails', async () => {
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'currentUser-abc';
+      const mockIssues: JiraIssue[] = [
+        { id: '1', key: 'DATE-ONLY-1', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'A', name: 'A' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+      (jiraApiServiceMock.getProjectsWhereUserHasAnyPermission as any).mockRejectedValue(new Error('perm api failed'));
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue(mockIssues);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue(mockIssues);
+
+      await issueProviderService.getIssues(period);
+      const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
+      expect(calledJql).not.toMatch(/project in \(/);
     });
 
     it('includes issues when the user commented within the period', async () => {
