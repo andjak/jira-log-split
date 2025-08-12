@@ -7,9 +7,10 @@ import {
   ADAPTIVE_RAMP_UP_RATIO,
   ADAPTIVE_THROTTLE_BACKOFF_RATIO,
   JIRA_DEFAULT_PAGINATION_CONCURRENCY,
-  JIRA_DETAILED_FETCH_BATCH_SIZE,
   PERMISSIONS_CACHE_TTL_MS,
   JIRA_SEARCH_DESIRED_PAGE_SIZE,
+  DETAILED_BATCH_MIN_KEYS,
+  DETAILED_BATCH_MAX_KEYS,
 } from '../core/constants';
 import { SettingsService } from './SettingsService';
 
@@ -171,28 +172,63 @@ export class JiraApiService {
    */
   public async fetchIssuesDetailedByKeys(keys: string[], options?: { batchSize?: number; concurrency?: number }): Promise<JiraIssue[]> {
     if (!keys || keys.length === 0) return [];
-    const batchSize = Math.max(1, options?.batchSize ?? JIRA_DETAILED_FETCH_BATCH_SIZE);
-    const batches: string[][] = [];
-    for (let i = 0; i < keys.length; i += batchSize) batches.push(keys.slice(i, i + batchSize));
-
+    // Determine target concurrency first
     const { initialConcurrency } = await this.getStartingConcurrencyInfo();
-    const concurrency = Math.max(1, options?.concurrency ?? initialConcurrency);
-    await this.debugLog('phase-detailed-start', { initialConcurrency, usedConcurrency: concurrency, batches: batches.length });
+    const targetConcurrency = Math.max(1, options?.concurrency ?? initialConcurrency);
+
+    // Compute dynamic batch size from total keys and target concurrency, clamped to bounds
+    const rawBatchSize = Math.ceil(keys.length / targetConcurrency);
+    const batchSize = Math.min(
+      Math.max(rawBatchSize || 0, DETAILED_BATCH_MIN_KEYS),
+      DETAILED_BATCH_MAX_KEYS,
+    );
+
+    const batches: string[][] = [];
+    if (batchSize > 0) {
+      for (let i = 0; i < keys.length; i += batchSize) batches.push(keys.slice(i, i + batchSize));
+    }
+
+    const concurrency = targetConcurrency;
+    await this.debugLog('phase-detailed-start', { initialConcurrency: targetConcurrency, usedConcurrency: concurrency, batches: batches.length });
 
     const tasks: Array<() => Promise<JiraIssue[]>> = batches.map((chunk) => async () => {
       const jqlChunk = `key in (${chunk.map((k) => `"${k}"`).join(',')})`;
-      const body = {
-        jql: jqlChunk,
-        maxResults: chunk.length,
-        startAt: 0,
-        expand: ['changelog'],
-        fields: ['summary', 'issuetype', 'project', 'updated', 'comment'],
-      } as const;
-      const data = await this._request<{ issues: JiraIssue[] }>(`${this.JIRA_API_V2}/search`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      return data.issues || [];
+      const collected: JiraIssue[] = [];
+      let startAt = 0;
+      let total: number | null = null;
+      // Use desired page size or chunk length, server will cap as needed
+      const requestedPageSize = Math.min(JIRA_SEARCH_DESIRED_PAGE_SIZE, chunk.length);
+
+      // Paginate within the chunk until we've collected all results
+      // to avoid losing issues when Jira caps maxResults (often at 100)
+      // and returns total > maxResults.
+      for (;;) {
+        const body = {
+          jql: jqlChunk,
+          maxResults: requestedPageSize,
+          startAt,
+          expand: ['changelog'],
+          fields: ['summary', 'issuetype', 'project', 'updated', 'comment'],
+        } as const;
+        const data = await this._request<{ issues: JiraIssue[]; total?: number; startAt?: number; maxResults?: number }>(
+          `${this.JIRA_API_V2}/search`,
+          {
+            method: 'POST',
+            body: JSON.stringify(body),
+          },
+        );
+        const pageIssues = data.issues || [];
+        if (pageIssues.length > 0) collected.push(...pageIssues);
+        if (typeof data.total === 'number') total = data.total;
+
+        // Stop when no more items or we've reached declared total
+        if (pageIssues.length === 0) break;
+        if (total !== null && collected.length >= total) break;
+
+        startAt += pageIssues.length;
+      }
+
+      return collected;
     });
 
     const { results: pages, hadThrottle, finalConcurrency } = await this.processQueueWithAdaptiveConcurrency(tasks, concurrency);

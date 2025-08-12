@@ -65,6 +65,31 @@ describe('JiraUrlDetector', () => {
       const url = await detectJiraBaseUrl();
       expect(url).toBe('https://example.atlassian.net');
     });
+
+    it('picks host from cookies list, preferring tenant host over api/id or apex', async () => {
+      (global as any).chrome.cookies.getAll.mockImplementation(async ({ domain }: any) => {
+        if (domain === 'atlassian.net') {
+          return [
+            { domain: '.atlassian.net' },
+            { domain: '.api.atlassian.net' },
+            { domain: '.foo.atlassian.net' },
+            { domain: '.foo.atlassian.net' },
+          ];
+        }
+        return [];
+      });
+      const url = await detectJiraBaseUrl();
+      expect(url).toBe('https://foo.atlassian.net');
+    });
+
+    it('picks host from tabs when cookies are empty', async () => {
+      (global as any).chrome.cookies.getAll.mockResolvedValue([]);
+      (global as any).chrome.tabs.query.mockResolvedValue([
+        { url: 'https://bar.atlassian.net/browse/XYZ-1' },
+      ]);
+      const url = await detectJiraBaseUrl();
+      expect(url).toBe('https://bar.atlassian.net');
+    });
   });
 });
 

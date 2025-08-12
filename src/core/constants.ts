@@ -24,10 +24,11 @@ export const JIRA_SEARCH_DESIRED_PAGE_SIZE = 1000;
 // Default parallel workers for legacy paginated search (non-adaptive path)
 export const JIRA_DEFAULT_PAGINATION_CONCURRENCY = 8;
 
-// Batch size for detailed Phase 2 fetch (keys -> changelog/comments)
-export const JIRA_DETAILED_FETCH_BATCH_SIZE = 200;
+// Dynamic batching limits for detailed Phase 2 fetch (keys -> changelog/comments)
+export const DETAILED_BATCH_MIN_KEYS = 50;
+export const DETAILED_BATCH_MAX_KEYS = 1000;
 
 // TTL for caching permission-derived project filters (milliseconds)
-export const PERMISSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export const PERMISSIONS_CACHE_TTL_MS = 60 * 60 * 1000; // 10 minutes
 
 
