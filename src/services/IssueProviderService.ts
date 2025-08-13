@@ -114,6 +114,68 @@ export class IssueProviderService {
     return withActivity;
   }
 
+  // Streaming variant for UI: emits sorted arrays on each batch insert using binary insertion
+  public async getIssuesByActivityStream(
+    period: Period,
+    onUpdate: (issues: JiraIssue[]) => void,
+  ): Promise<JiraIssue[]> {
+    const currentUser = await this.jiraApiService.getCurrentUser();
+    const currentUserId = currentUser.accountId;
+
+    const jqlFilters = [
+      `updated >= "${this.formatDateForJql(period.start)}"`,
+      `updated <= "${this.formatDateForJql(period.end)}"`,
+    ];
+    const includedProjects = await this.settingsService.get('includedProjects');
+    if (Array.isArray(includedProjects) && includedProjects.length > 0) {
+      jqlFilters.push(`project in ("${includedProjects.join('", "')}")`);
+    }
+    const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
+
+    const accumulator: JiraIssue[] = [];
+
+    const insertSorted = (issue: JiraIssue) => {
+      const ts = issue.userActivity?.lastActivityAtISO ? Date.parse(issue.userActivity.lastActivityAtISO) : 0;
+      let lo = 0, hi = accumulator.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        const midTs = accumulator[mid].userActivity?.lastActivityAtISO ? Date.parse(accumulator[mid].userActivity!.lastActivityAtISO!) : 0;
+        if (ts > midTs) {
+          hi = mid;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      accumulator.splice(lo, 0, issue);
+    };
+
+    const processBatch = (batch: JiraIssue[]) => {
+      for (const issue of batch) {
+        const lastUpdatedByMeISO = this.findLastChangeByUser(issue, currentUserId, period);
+        const lastCommentedByMeISO = this.findLastCommentByUser(issue, currentUserId, period);
+        const lastActivityAtISO = this.pickLatestISO([lastUpdatedByMeISO, lastCommentedByMeISO]);
+        if (!lastActivityAtISO) continue;
+        const activity = issue.userActivity ?? (issue.userActivity = {} as any);
+        activity.lastUpdatedByMeISO = lastUpdatedByMeISO || undefined;
+        activity.lastCommentedByMeISO = lastCommentedByMeISO || undefined;
+        activity.lastActivityAtISO = lastActivityAtISO || undefined;
+        insertSorted(issue);
+      }
+      onUpdate(accumulator.slice());
+    };
+
+    await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[], _idx: number, pageSize: number) => {
+      const keys = page.map((i) => i.key).filter(Boolean);
+      if (keys.length === 0) return;
+      await this.jiraApiService.fetchIssuesDetailedByKeys(keys, {
+        batchSize: pageSize,
+        onBatch: async (issues) => processBatch(issues),
+      });
+    });
+
+    return accumulator;
+  }
+
   // Removed unused helper: isRelevantActivity
 
   private findLastChangeByUser(issue: JiraIssue, currentUserId: string, period: Period): string | null {
