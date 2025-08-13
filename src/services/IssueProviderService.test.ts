@@ -346,6 +346,40 @@ describe('IssueProviderService', () => {
       // First call keys should include only K-1
       expect(calls[0][0]).toEqual(['K-1']);
     });
+
+    it('pipelined phase2: uses minimal page size as detailed batch size', async () => {
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'me-2';
+      const minimalPage: JiraIssue[] = [
+        { id: '11', key: 'PX-11', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'P', name: 'P' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+      const minimalPageSize = 100;
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'includedProjects') return [];
+        if (key === 'pipelinedPhase2Enabled') return true;
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+
+      // Provide paged minimal results with explicit pageSize
+      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (_jql: string, onPage: Function) => {
+        await onPage(minimalPage, 0, minimalPageSize);
+        return minimalPage;
+      });
+
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([]);
+
+      const service = new IssueProviderService(jiraApiServiceMock, settingsServiceMock);
+      await service.getIssues(period);
+
+      const calls = (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      // Assert options.batchSize equals minimal page size
+      const passedOptions = calls[0][1] || {};
+      expect(passedOptions.batchSize).toBe(minimalPageSize);
+    });
   });
 });
 

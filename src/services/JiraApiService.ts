@@ -9,8 +9,6 @@ import {
   JIRA_DEFAULT_PAGINATION_CONCURRENCY,
   PERMISSIONS_CACHE_TTL_MS,
   JIRA_SEARCH_DESIRED_PAGE_SIZE,
-  DETAILED_BATCH_MIN_KEYS,
-  DETAILED_BATCH_MAX_KEYS,
 } from '../core/constants';
 import { SettingsService } from './SettingsService';
 
@@ -172,7 +170,7 @@ export class JiraApiService {
    */
   public async fetchIssuesMinimalPaged(
     jql: string,
-    onPage: (issues: JiraIssue[], pageIndex: number) => Promise<void> | void,
+    onPage: (issues: JiraIssue[], pageIndex: number, pageSize: number) => Promise<void> | void,
   ): Promise<JiraIssue[]> {
     const desiredPageSize = JIRA_SEARCH_DESIRED_PAGE_SIZE;
     const all: JiraIssue[] = [];
@@ -194,7 +192,7 @@ export class JiraApiService {
     const firstIssues = first.issues || [];
     all.push(...firstIssues);
     await this.debugLog('phase-minimal-page', { idx: 0, count: firstIssues.length });
-    await onPage(firstIssues, 0);
+    await onPage(firstIssues, 0, (first.maxResults as number) || desiredPageSize);
 
     const total = typeof first.total === 'number' ? first.total : firstIssues.length;
     const pageSize = typeof first.maxResults === 'number' ? first.maxResults : desiredPageSize;
@@ -207,7 +205,8 @@ export class JiraApiService {
     const { initialConcurrency } = await this.getStartingConcurrencyInfo();
     await this.debugLog('phase-minimal-start', { initialConcurrency });
     let pageIndex = 1;
-    const tasks: Array<() => Promise<{ idx: number; issues: JiraIssue[] }>> = starts.map((startAt) => async () => {
+    const effectivePageSize = pageSize;
+    const tasks: Array<() => Promise<{ idx: number; issues: JiraIssue[]; pageSize: number }>> = starts.map((startAt) => async () => {
       const body = {
         jql,
         maxResults: pageSize,
@@ -219,7 +218,7 @@ export class JiraApiService {
         body: JSON.stringify(body),
       });
       const idx = pageIndex++;
-      return { idx, issues: data.issues || [] };
+      return { idx, issues: data.issues || [], pageSize: effectivePageSize };
     });
 
     const { results: pages } = await this.processQueueWithAdaptiveConcurrency(
@@ -229,7 +228,7 @@ export class JiraApiService {
         if (p && (p as any).issues && (p as any).issues.length) {
           all.push(...(p as any).issues);
           await this.debugLog('phase-minimal-page', { idx: (p as any).idx, count: (p as any).issues.length });
-          await onPage((p as any).issues, (p as any).idx);
+          await onPage((p as any).issues, (p as any).idx, (p as any).pageSize ?? effectivePageSize);
         }
       },
     );
@@ -254,12 +253,13 @@ export class JiraApiService {
     const { initialConcurrency } = await this.getStartingConcurrencyInfo();
     const targetConcurrency = Math.max(1, options?.concurrency ?? initialConcurrency);
 
-    // Compute dynamic batch size from total keys and target concurrency, clamped to bounds
-    const rawBatchSize = Math.ceil(keys.length / targetConcurrency);
-    const batchSize = Math.min(
-      Math.max(rawBatchSize || 0, DETAILED_BATCH_MIN_KEYS),
-      DETAILED_BATCH_MAX_KEYS,
-    );
+    // Determine batch size: honor explicit option if provided; otherwise compute dynamically and clamp
+    const explicitBatchSize = (options?.batchSize && options.batchSize > 0)
+      ? Math.floor(options.batchSize)
+      : undefined;
+    const batchSize = explicitBatchSize !== undefined
+      ? explicitBatchSize
+      : Math.max(Math.ceil(keys.length / targetConcurrency) || 0, 1);
 
     const batches: string[][] = [];
     if (batchSize > 0) {
