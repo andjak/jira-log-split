@@ -31,35 +31,45 @@ describe('JiraApiService dynamic batch sizing', () => {
 
   it('totalKeys < targetConcurrency → batch size becomes 1 (many tiny tasks)', async () => {
     const payload = await runWith(5, 10);
-    // With 5 keys and 10 desired concurrency, batch size clamps to min (50), so 1 batch
+    // With 5 keys and 10 desired concurrency, batch size = ceil(5/10)=1 → batches=5
     expect(payload).toBeTruthy();
-    expect(payload.batches).toBe(1);
+    expect(payload.batches).toBe(5);
   });
 
   it('ceil(total/target) < minBatchSize → batch size clamps to min', async () => {
-    const payload = await runWith(200, 1000); // ceil(200/1000)=1 < min(50)
+    const payload = await runWith(200, 1000); // ceil(200/1000)=1 → batches=200 with no min clamp
     expect(payload).toBeTruthy();
-    // With min 50, batches ≈ ceil(200/50)=4
-    expect(payload.batches).toBe(4);
+    expect(payload.batches).toBe(200);
   });
 
   it('ceil(total/target) between min and max → use computed size', async () => {
-    const payload = await runWith(500, 100); // ceil(500/100)=5 within [50,1000] → clamps to min 50
+    const payload = await runWith(500, 100); // ceil(500/100)=5 → batches=ceil(500/5)=100
     expect(payload).toBeTruthy();
-    // With min 50, batches ≈ ceil(500/50)=10
-    expect(payload.batches).toBe(10);
+    expect(payload.batches).toBe(100);
   });
 
   it('ceil(total/target) > max → batch size clamps to max', async () => {
-    const payload = await runWith(50000, 10); // ceil(50000/10)=5000 > max(1000) → use 1000
+    const payload = await runWith(50000, 10); // ceil(50000/10)=5000 → batches=ceil(50000/5000)=10
     expect(payload).toBeTruthy();
-    expect(payload.batches).toBe(Math.ceil(50000 / 1000));
+    expect(payload.batches).toBe(10);
   });
 
   it('totalKeys = 0 → no batches', async () => {
     const payload = await runWith(0, 100);
     // fetchIssuesDetailedByKeys returns early; no start log emitted
     expect(payload).toBeNull();
+  });
+
+  it('respects explicit options.batchSize for phase 2', async () => {
+    // With total=250 and very high targetConcurrency, dynamic calc would clamp to min=50 → batches=5.
+    // Passing explicit batchSize=100 should result in batches=ceil(250/100)=3.
+    const logSpy = vi.spyOn<any, any>(svc as any, 'debugLog');
+    const keys = Array.from({ length: 250 }).map((_, i) => `K-${i + 1}`);
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ issues: [], total: 0, startAt: 0, maxResults: 100 }) });
+    await svc.fetchIssuesDetailedByKeys(keys, { concurrency: 1000, batchSize: 100 });
+    const entry = logSpy.mock.calls.find((c) => c[0] === 'phase-detailed-start');
+    expect(entry).toBeTruthy();
+    expect(entry[1].batches).toBe(3);
   });
 });
 

@@ -70,11 +70,12 @@ export class IssueProviderService {
       const collectedKeys: string[] = [];
       const pageDetailPromises: Promise<JiraIssue[]>[] = [];
       // Start Phase 2 calls as pages arrive; do not await until all pages scheduled
-      await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[]) => {
+      await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[], _idx: number, pageSize: number) => {
         const keys = page.map((i) => i.key).filter(Boolean);
         collectedKeys.push(...keys);
         if (keys.length > 0) {
-          pageDetailPromises.push(this.jiraApiService.fetchIssuesDetailedByKeys(keys));
+          // Use the minimal page size as the detailed batch size for best throughput
+          pageDetailPromises.push(this.jiraApiService.fetchIssuesDetailedByKeys(keys, { batchSize: pageSize }));
         }
       });
       const pageDetails = await Promise.all(pageDetailPromises);

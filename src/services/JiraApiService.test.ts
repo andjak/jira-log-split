@@ -33,7 +33,7 @@ describe('JiraApiService', () => {
       // Assert
       // First call is the initial page discovery (startAt 0)
       expect(fetchMock.mock.calls[0][0]).toBe('https://my-jira.atlassian.net/rest/api/2/search');
-      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ startAt: 0, maxResults: 1000 });
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ startAt: 0, maxResults: 100 });
       // Second call is next page; page size comes from server (maxResults: 1 in this test)
       expect(fetchMock.mock.calls[1][0]).toBe('https://my-jira.atlassian.net/rest/api/2/search');
       expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ startAt: 1, maxResults: 1 });

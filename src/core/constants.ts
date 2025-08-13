@@ -19,14 +19,10 @@ export const ADAPTIVE_RAMP_UP_RATIO = 1.1;
 export const ADAPTIVE_RAMP_UP_MIN_STEP = 1;
 
 // Desired page size when requesting issues from Jira (server may cap)
-export const JIRA_SEARCH_DESIRED_PAGE_SIZE = 1000;
+export const JIRA_SEARCH_DESIRED_PAGE_SIZE = 100;
 
 // Default parallel workers for legacy paginated search (non-adaptive path)
 export const JIRA_DEFAULT_PAGINATION_CONCURRENCY = 8;
-
-// Dynamic batching limits for detailed Phase 2 fetch (keys -> changelog/comments)
-export const DETAILED_BATCH_MIN_KEYS = 100;
-export const DETAILED_BATCH_MAX_KEYS = 1000;
 
 // TTL for caching permission-derived project filters (milliseconds)
 export const PERMISSIONS_CACHE_TTL_MS = 60 * 60 * 1000; // 10 minutes
