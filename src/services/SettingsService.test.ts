@@ -67,5 +67,23 @@ describe('SettingsService', () => {
       expect(storageMock.local.set).toHaveBeenCalledWith({ submissionStartHourUTC: 10 });
     });
   });
+
+  describe('includedProjects', () => {
+    it('returns default [] when unset', async () => {
+      storageMock.local.get.mockResolvedValue({});
+      const projects = await settingsService.get('includedProjects');
+      expect(projects).toEqual([]);
+      expect(storageMock.local.get).toHaveBeenCalledWith('includedProjects');
+    });
+
+    it('can be set and retrieved', async () => {
+      await settingsService.set('includedProjects', ['A', 'B']);
+      expect(storageMock.local.set).toHaveBeenCalledWith({ includedProjects: ['A', 'B'] });
+
+      storageMock.local.get.mockResolvedValue({ includedProjects: ['A', 'B'] });
+      const projects = await settingsService.get('includedProjects');
+      expect(projects).toEqual(['A', 'B']);
+    });
+  });
 });
 

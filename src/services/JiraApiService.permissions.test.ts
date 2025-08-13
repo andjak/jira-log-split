@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { JiraApiService } from './JiraApiService';
+import { JiraProjectSummary } from '../core/jira-types';
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -80,6 +81,24 @@ describe('JiraApiService permissions caching', () => {
     const res = await svc.getProjectsWhereUserHasAnyPermission(['ADD_COMMENTS']);
     expect(res).toEqual(['NEW']);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('getActionableProjectsWithMetadata returns summaries with name and avatar', async () => {
+    const svc = new JiraApiService('https://my-jira.atlassian.net');
+    // project/search page 1
+    fetchMock.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({
+      values: [
+        { id: 1, key: 'P1', name: 'Project One', avatarUrls: { '16x16': 'a16', '48x48': 'a48' }, description: 'desc1' },
+        { id: 2, key: 'P2', name: 'Project Two', avatarUrls: { '32x32': 'b32' } },
+      ], isLast: true,
+    })});
+    // mypermissions for P1 and P2
+    fetchMock.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ permissions: { EDIT_ISSUES: { havePermission: true } } }) });
+    fetchMock.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ permissions: { EDIT_ISSUES: { havePermission: false } } }) });
+
+    const res: JiraProjectSummary[] = await svc.getActionableProjectsWithMetadata(['EDIT_ISSUES']);
+    expect(res).toHaveLength(1);
+    expect(res[0]).toEqual({ id: '1', key: 'P1', name: 'Project One', avatarUrl: 'a48', description: 'desc1' });
   });
 });
 

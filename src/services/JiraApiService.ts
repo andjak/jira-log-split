@@ -1,4 +1,4 @@
-import { JiraIssue, JiraUser, JiraWorklog } from '../core/jira-types';
+import { JiraIssue, JiraUser, JiraWorklog, JiraProjectSummary } from '../core/jira-types';
 import {
   ADAPTIVE_DEFAULT_START_CONCURRENCY,
   ADAPTIVE_FALLBACK_CONCURRENCY,
@@ -503,6 +503,53 @@ export class JiraApiService {
     cache[cacheKey] = { ts: now, keys: allowed };
     await this.setPermissionsCache(cache);
     return allowed;
+  }
+
+  /**
+   * Returns projects where the current user has any of the provided permissions,
+   * with UI-friendly metadata: id, key, name, avatarUrl, description.
+   * Uses project/search for listing and mypermissions per project for filtering.
+   */
+  public async getActionableProjectsWithMetadata(permissions: string[]): Promise<JiraProjectSummary[]> {
+    const pageSize = 50;
+    const allProjects: Array<{ id: string; key: string; name: string; avatarUrls?: Record<string, string>; description?: any }>
+      = [];
+    let startAt = 0;
+    // Paginate through project search collecting basic project info
+    for (;;) {
+      const data = await this._request<{ values: Array<any>; isLast?: boolean }>(
+        `${this.JIRA_API_V3}/project/search?startAt=${startAt}&maxResults=${pageSize}`,
+      );
+      const values = data.values || [];
+      allProjects.push(...values);
+      if (values.length === 0 || (data as any).isLast === true) break;
+      startAt += values.length;
+    }
+
+    if (allProjects.length === 0) return [];
+    const tasks = allProjects.map((p) => async () => {
+      const params = new URLSearchParams();
+      params.set('projectId', String(p.id));
+      if (permissions.length > 0) params.set('permissions', permissions.join(','));
+      const data = await this._request<{ permissions: Record<string, { havePermission: boolean }> }>(
+        `${this.JIRA_API_V3}/mypermissions?${params.toString()}`,
+      );
+      const perms = data.permissions || {};
+      const hasAny = permissions.length === 0 || permissions.some((k) => perms[k]?.havePermission === true);
+      if (!hasAny) return null;
+      const avatarUrl = p.avatarUrls?.['48x48'] || p.avatarUrls?.['32x32'] || p.avatarUrls?.['24x24'] || p.avatarUrls?.['16x16'];
+      const summary: JiraProjectSummary = {
+        id: String(p.id),
+        key: p.key,
+        name: p.name,
+        avatarUrl,
+        description: typeof p.description === 'string' ? p.description : undefined,
+      };
+      return summary;
+    });
+
+    const { results } = await this.processQueueWithAdaptiveConcurrency(tasks, (await this.getStartingConcurrencyInfo()).initialConcurrency);
+    return (results as Array<JiraProjectSummary | null>).filter((x): x is JiraProjectSummary => Boolean(x));
   }
 }
 

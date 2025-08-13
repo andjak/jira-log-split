@@ -1,7 +1,7 @@
 // Global constants for adaptive concurrency and batching
 
 // When there is no saved per-host value, start here
-export const ADAPTIVE_DEFAULT_START_CONCURRENCY = 100;
+export const ADAPTIVE_DEFAULT_START_CONCURRENCY = 200;
 
 // Fallback when settings are unavailable (e.g., tests) or unreadable
 export const ADAPTIVE_FALLBACK_CONCURRENCY = 12;

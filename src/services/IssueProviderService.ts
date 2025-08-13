@@ -56,19 +56,11 @@ export class IssueProviderService {
       `updated >= "${this.formatDateForJql(period.start)}"`,
       `updated <= "${this.formatDateForJql(period.end)}"`,
     ];
-    // Try to prefilter by projects where user can act (reduces detailed fetch cost)
-    try {
-      // Jira permissions: ADD_COMMENTS, EDIT_ISSUES, WORK_ON_ISSUES (instead of ADD_WORKLOGS which is not a permission key)
-      const allowedProjects = await this.jiraApiService.getProjectsWhereUserHasAnyPermission([
-        'ADD_COMMENTS',
-        'EDIT_ISSUES',
-        'WORK_ON_ISSUES',
-      ]);
-      if (allowedProjects.length > 0) {
-        jqlFilters.push(`project in ("${allowedProjects.join('", "')}")`);
-      }
-    } catch {
-      // ignore permission prefilter errors
+    // Optional user-configured project filter
+    const includedProjects = await this.settingsService.get('includedProjects');
+    if (Array.isArray(includedProjects) && includedProjects.length > 0) {
+      // If user explicitly configured projects, use them; otherwise default to date-only JQL
+      jqlFilters.push(`project in ("${includedProjects.join('", "')}")`);
     }
     const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
 

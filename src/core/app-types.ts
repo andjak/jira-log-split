@@ -13,6 +13,8 @@ export interface AppSettings {
   initialDistribution: 'even' | 'activity' | 'none';
   submissionStartHourUTC: number;
   adaptiveConcurrencyByHost: Record<string, number>;
+  // Optional explicit project filters for initial query. If empty, query by date only.
+  includedProjects: string[];
 }
 
 /**
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   initialDistribution: 'even',
   submissionStartHourUTC: 9,
   adaptiveConcurrencyByHost: {},
+  includedProjects: [],
 };
 
 /**
