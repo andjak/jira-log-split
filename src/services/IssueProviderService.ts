@@ -56,27 +56,38 @@ export class IssueProviderService {
       `updated >= "${this.formatDateForJql(period.start)}"`,
       `updated <= "${this.formatDateForJql(period.end)}"`,
     ];
-    // Try to prefilter by projects where user can act (reduces detailed fetch cost)
-    try {
-      // Jira permissions: ADD_COMMENTS, EDIT_ISSUES, WORK_ON_ISSUES (instead of ADD_WORKLOGS which is not a permission key)
-      const allowedProjects = await this.jiraApiService.getProjectsWhereUserHasAnyPermission([
-        'ADD_COMMENTS',
-        'EDIT_ISSUES',
-        'WORK_ON_ISSUES',
-      ]);
-      if (allowedProjects.length > 0) {
-        jqlFilters.push(`project in ("${allowedProjects.join('", "')}")`);
-      }
-    } catch {
-      // ignore permission prefilter errors
+    // Optional user-configured project filter
+    const includedProjects = await this.settingsService.get('includedProjects');
+    if (Array.isArray(includedProjects) && includedProjects.length > 0) {
+      // If user explicitly configured projects, use them; otherwise default to date-only JQL
+      jqlFilters.push(`project in ("${includedProjects.join('", "')}")`);
     }
     const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
 
-    const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
-    const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
-
-    // Phase 2: fetch details for candidates in batches; let JiraApiService pick adaptive concurrency
-    const allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys);
+    const pipelined = await this.settingsService.get('pipelinedPhase2Enabled');
+    let allIssues: JiraIssue[];
+    if (pipelined && (this.jiraApiService as any).fetchIssuesMinimalPaged) {
+      const collectedKeys: string[] = [];
+      const pageDetailPromises: Promise<JiraIssue[]>[] = [];
+      // Start Phase 2 calls as pages arrive; do not await until all pages scheduled
+      await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[]) => {
+        const keys = page.map((i) => i.key).filter(Boolean);
+        collectedKeys.push(...keys);
+        if (keys.length > 0) {
+          pageDetailPromises.push(this.jiraApiService.fetchIssuesDetailedByKeys(keys));
+        }
+      });
+      const pageDetails = await Promise.all(pageDetailPromises);
+      allIssues = pageDetails.flat();
+      // If, for any reason, minimal returned issues not covered (shouldn't happen), fallback to full fetch
+      if (allIssues.length === 0 && collectedKeys.length > 0) {
+        allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(collectedKeys);
+      }
+    } else {
+      const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
+      const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
+      allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys);
+    }
 
     // Compute user activity timestamps (updates via changelog, and comments)
     for (const issue of allIssues) {

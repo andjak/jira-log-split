@@ -13,6 +13,10 @@ export interface AppSettings {
   initialDistribution: 'even' | 'activity' | 'none';
   submissionStartHourUTC: number;
   adaptiveConcurrencyByHost: Record<string, number>;
+  // Optional explicit project filters for initial query. If empty, query by date only.
+  includedProjects: string[];
+  // When true, start Phase 2 (details) as each minimal page arrives
+  pipelinedPhase2Enabled: boolean;
 }
 
 /**
@@ -28,6 +32,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   initialDistribution: 'even',
   submissionStartHourUTC: 9,
   adaptiveConcurrencyByHost: {},
+  includedProjects: [],
+  pipelinedPhase2Enabled: true,
 };
 
 /**

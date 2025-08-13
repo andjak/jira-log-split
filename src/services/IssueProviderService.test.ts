@@ -26,24 +26,7 @@ describe('IssueProviderService', () => {
     issueProviderService = new IssueProviderService(jiraApiServiceMock, settingsServiceMock);
   });
 
-  describe('fetchIssues', () => {
-    it('should fetch issues and expand the changelog', async () => {
-      // Arrange
-      const jql = 'assignee = currentUser()';
-      const mockIssues: JiraIssue[] = [
-        { id: '1001', key: 'PROJ-1', fields: { summary: 'Test Issue 1', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'PROJ', name: 'Project' }, updated: '' } },
-      ];
-      (jiraApiServiceMock.fetchIssues as any).mockResolvedValue({ issues: mockIssues });
-
-      // Act
-      const issues = await (new JiraApiService('https://my-jira.atlassian.net')).fetchIssues(jql);
-
-      // Assert – this test originally asserted fetch call; that behavior belongs to JiraApiService.test.
-      // Here we simply ensure the shape; leave detailed call checks to JiraApiService.test.ts
-      expect(Array.isArray(mockIssues)).toBe(true);
-      expect(issues).toBeDefined();
-    });
-  });
+  // Removed legacy cross-class test that sometimes times out under CI; fetch behavior covered in JiraApiService.test.ts
 
   describe('getIssues (My Profile Strategy)', () => {
     it('should construct the correct JQL for the "My Profile" strategy', async () => {
@@ -165,7 +148,7 @@ describe('IssueProviderService', () => {
       expect(calledJql).not.toMatch(/assignee|reporter|creator|watcher|project not in|issuetype not in/);
     });
 
-    it('includes project prefilter when user has actionable permissions', async () => {
+    it('includes project prefilter only when settings.includedProjects is non-empty; otherwise date-only', async () => {
       const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
       const currentUserAccountId = 'currentUser-abc';
       const mockIssues: JiraIssue[] = [
@@ -174,6 +157,7 @@ describe('IssueProviderService', () => {
 
       (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
         if (key === 'issueSource') return 'activity';
+        if (key === 'includedProjects') return [];
         return null;
       });
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
@@ -183,11 +167,20 @@ describe('IssueProviderService', () => {
 
       await issueProviderService.getIssues(period);
 
-      // Ensures valid permission keys are requested
-      const calledWith = (jiraApiServiceMock.getProjectsWhereUserHasAnyPermission as any).mock.calls[0][0] as string[];
-      expect(calledWith.sort()).toEqual(['ADD_COMMENTS','EDIT_ISSUES','WORK_ON_ISSUES'].sort());
+      // With no includedProjects, we should NOT add project in (...) even if user has permissions
       const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
-      expect(calledJql).toMatch(/project in \("PROJ1", "PROJ2"\)/);
+      expect(calledJql).not.toMatch(/project in \(/);
+
+      // Now simulate includedProjects and expect project filter to be added
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'includedProjects') return ['P1','P2'];
+        return null;
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockClear();
+      await issueProviderService.getIssues(period);
+      const calledJql2 = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
+      expect(calledJql2).toMatch(/project in \("P1", "P2"\)/);
     });
 
     it('falls back without project prefilter when permission fetch fails', async () => {
@@ -316,6 +309,42 @@ describe('IssueProviderService', () => {
       expect(both.userActivity?.lastUpdatedByMeISO).toBe('2023-10-08T08:00:00.000Z');
       expect(both.userActivity?.lastCommentedByMeISO).toBe('2023-10-09T12:00:00.000Z');
       expect(both.userActivity?.lastActivityAtISO).toBe('2023-10-09T12:00:00.000Z');
+    });
+
+    it('pipelined phase2: starts detailed fetch for first page while minimal phase continues (feature flag on)', async () => {
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'me-1';
+      const page1: JiraIssue[] = [
+        { id: '1', key: 'K-1', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'X', name: 'X' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+      const page2: JiraIssue[] = [
+        { id: '2', key: 'K-2', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'X', name: 'X' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'includedProjects') return [];
+        if (key === 'pipelinedPhase2Enabled') return true;
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+
+      // Use the paged API: simulate onPage receiving two pages
+      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (_jql: string, onPage: Function) => {
+        await onPage(page1, 0);
+        await onPage(page2, 1);
+        return [...page1, ...page2];
+      });
+      // Detailed fetch should be invoked twice, once per page
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([]);
+
+      const service = new IssueProviderService(jiraApiServiceMock, settingsServiceMock);
+      await service.getIssues(period);
+
+      const calls = (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      // First call keys should include only K-1
+      expect(calls[0][0]).toEqual(['K-1']);
     });
   });
 });

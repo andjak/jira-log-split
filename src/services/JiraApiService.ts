@@ -1,4 +1,4 @@
-import { JiraIssue, JiraUser, JiraWorklog } from '../core/jira-types';
+import { JiraIssue, JiraUser, JiraWorklog, JiraProjectSummary } from '../core/jira-types';
 import {
   ADAPTIVE_DEFAULT_START_CONCURRENCY,
   ADAPTIVE_FALLBACK_CONCURRENCY,
@@ -167,6 +167,84 @@ export class JiraApiService {
   }
 
   /**
+   * Phase 1 (streaming): Fetch minimal issues in pages and invoke a callback per page as soon as it arrives.
+   * Returns the full list as well, for convenience.
+   */
+  public async fetchIssuesMinimalPaged(
+    jql: string,
+    onPage: (issues: JiraIssue[], pageIndex: number) => Promise<void> | void,
+  ): Promise<JiraIssue[]> {
+    const desiredPageSize = JIRA_SEARCH_DESIRED_PAGE_SIZE;
+    const all: JiraIssue[] = [];
+
+    const firstBody = {
+      jql,
+      maxResults: desiredPageSize,
+      startAt: 0,
+      fields: ['summary', 'updated', 'key'],
+    } as const;
+
+    const first = await this._request<{
+      issues: JiraIssue[];
+      total?: number;
+      startAt?: number;
+      maxResults?: number;
+    }>(`${this.JIRA_API_V2}/search`, { method: 'POST', body: JSON.stringify(firstBody) });
+
+    const firstIssues = first.issues || [];
+    all.push(...firstIssues);
+    await this.debugLog('phase-minimal-page', { idx: 0, count: firstIssues.length });
+    await onPage(firstIssues, 0);
+
+    const total = typeof first.total === 'number' ? first.total : firstIssues.length;
+    const pageSize = typeof first.maxResults === 'number' ? first.maxResults : desiredPageSize;
+
+    if (all.length >= total) return all;
+
+    const starts: number[] = [];
+    for (let s = pageSize, idx = 1; s < total; s += pageSize, idx++) starts.push(s);
+
+    const { initialConcurrency } = await this.getStartingConcurrencyInfo();
+    await this.debugLog('phase-minimal-start', { initialConcurrency });
+    let pageIndex = 1;
+    const tasks: Array<() => Promise<{ idx: number; issues: JiraIssue[] }>> = starts.map((startAt) => async () => {
+      const body = {
+        jql,
+        maxResults: pageSize,
+        startAt,
+        fields: ['summary', 'updated', 'key'],
+      } as const;
+      const data = await this._request<{ issues: JiraIssue[] }>(`${this.JIRA_API_V2}/search`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      const idx = pageIndex++;
+      return { idx, issues: data.issues || [] };
+    });
+
+    const { results: pages } = await this.processQueueWithAdaptiveConcurrency(
+      tasks,
+      initialConcurrency,
+      async (p) => {
+        if (p && (p as any).issues && (p as any).issues.length) {
+          all.push(...(p as any).issues);
+          await this.debugLog('phase-minimal-page', { idx: (p as any).idx, count: (p as any).issues.length });
+          await onPage((p as any).issues, (p as any).idx);
+        }
+      },
+    );
+    // results already pushed in onItem; loop kept for completeness if any missed
+    for (const p of pages) {
+      if (p && (p as any).issues && (p as any).issues.length) {
+        // no-op; already handled in onItem
+      }
+    }
+    await this.persistRampedUpConcurrencyIfSaved();
+    await this.debugLog('phase-minimal-end', { pages: pages.length + 1 });
+    return all;
+  }
+
+  /**
    * Phase 2: Fetch detailed issue data for a set of keys, in batches.
    * Uses JQL key IN (...) to request batches with changelog/comments.
    */
@@ -243,7 +321,11 @@ export class JiraApiService {
     return all;
   }
 
-  private async processQueueWithAdaptiveConcurrency<T>(taskFactories: Array<() => Promise<T>>, startConcurrency: number): Promise<{ results: T[]; finalConcurrency: number; hadThrottle: boolean }> {
+  private async processQueueWithAdaptiveConcurrency<T>(
+    taskFactories: Array<() => Promise<T>>,
+    startConcurrency: number,
+    onItem?: (value: T, idx: number) => Promise<void> | void,
+  ): Promise<{ results: T[]; finalConcurrency: number; hadThrottle: boolean }> {
     const results: T[] = new Array(taskFactories.length);
     let concurrency = Math.max(1, startConcurrency);
     const pending: number[] = taskFactories.map((_, i) => i);
@@ -255,6 +337,11 @@ export class JiraApiService {
         batch.map(async (idx) => {
           try {
             const value = await taskFactories[idx]();
+            try {
+              if (onItem) await onItem(value, idx);
+            } catch {
+              // ignore onItem errors
+            }
             return { idx, ok: true as const, value };
           } catch (err: any) {
             return { idx, ok: false as const, err };
@@ -503,6 +590,53 @@ export class JiraApiService {
     cache[cacheKey] = { ts: now, keys: allowed };
     await this.setPermissionsCache(cache);
     return allowed;
+  }
+
+  /**
+   * Returns projects where the current user has any of the provided permissions,
+   * with UI-friendly metadata: id, key, name, avatarUrl, description.
+   * Uses project/search for listing and mypermissions per project for filtering.
+   */
+  public async getActionableProjectsWithMetadata(permissions: string[]): Promise<JiraProjectSummary[]> {
+    const pageSize = 50;
+    const allProjects: Array<{ id: string; key: string; name: string; avatarUrls?: Record<string, string>; description?: any }>
+      = [];
+    let startAt = 0;
+    // Paginate through project search collecting basic project info
+    for (;;) {
+      const data = await this._request<{ values: Array<any>; isLast?: boolean }>(
+        `${this.JIRA_API_V3}/project/search?startAt=${startAt}&maxResults=${pageSize}`,
+      );
+      const values = data.values || [];
+      allProjects.push(...values);
+      if (values.length === 0 || (data as any).isLast === true) break;
+      startAt += values.length;
+    }
+
+    if (allProjects.length === 0) return [];
+    const tasks = allProjects.map((p) => async () => {
+      const params = new URLSearchParams();
+      params.set('projectId', String(p.id));
+      if (permissions.length > 0) params.set('permissions', permissions.join(','));
+      const data = await this._request<{ permissions: Record<string, { havePermission: boolean }> }>(
+        `${this.JIRA_API_V3}/mypermissions?${params.toString()}`,
+      );
+      const perms = data.permissions || {};
+      const hasAny = permissions.length === 0 || permissions.some((k) => perms[k]?.havePermission === true);
+      if (!hasAny) return null;
+      const avatarUrl = p.avatarUrls?.['48x48'] || p.avatarUrls?.['32x32'] || p.avatarUrls?.['24x24'] || p.avatarUrls?.['16x16'];
+      const summary: JiraProjectSummary = {
+        id: String(p.id),
+        key: p.key,
+        name: p.name,
+        avatarUrl,
+        description: typeof p.description === 'string' ? p.description : undefined,
+      };
+      return summary;
+    });
+
+    const { results } = await this.processQueueWithAdaptiveConcurrency(tasks, (await this.getStartingConcurrencyInfo()).initialConcurrency);
+    return (results as Array<JiraProjectSummary | null>).filter((x): x is JiraProjectSummary => Boolean(x));
   }
 }
 

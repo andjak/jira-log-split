@@ -85,3 +85,14 @@ export interface JiraUser {
   emailAddress: string;
 }
 
+/**
+ * Minimal project summary used by the UI when selecting projects.
+ */
+export interface JiraProjectSummary {
+  id: string;
+  key: string;
+  name: string;
+  avatarUrl?: string;
+  description?: string;
+}
+
