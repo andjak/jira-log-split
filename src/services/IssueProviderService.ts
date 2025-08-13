@@ -64,11 +64,30 @@ export class IssueProviderService {
     }
     const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
 
-    const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
-    const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
-
-    // Phase 2: fetch details for candidates in batches; let JiraApiService pick adaptive concurrency
-    const allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys);
+    const pipelined = await this.settingsService.get('pipelinedPhase2Enabled');
+    let allIssues: JiraIssue[];
+    if (pipelined && (this.jiraApiService as any).fetchIssuesMinimalPaged) {
+      const collectedKeys: string[] = [];
+      const pageDetailPromises: Promise<JiraIssue[]>[] = [];
+      // Start Phase 2 calls as pages arrive; do not await until all pages scheduled
+      await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[]) => {
+        const keys = page.map((i) => i.key).filter(Boolean);
+        collectedKeys.push(...keys);
+        if (keys.length > 0) {
+          pageDetailPromises.push(this.jiraApiService.fetchIssuesDetailedByKeys(keys));
+        }
+      });
+      const pageDetails = await Promise.all(pageDetailPromises);
+      allIssues = pageDetails.flat();
+      // If, for any reason, minimal returned issues not covered (shouldn't happen), fallback to full fetch
+      if (allIssues.length === 0 && collectedKeys.length > 0) {
+        allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(collectedKeys);
+      }
+    } else {
+      const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
+      const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
+      allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys);
+    }
 
     // Compute user activity timestamps (updates via changelog, and comments)
     for (const issue of allIssues) {

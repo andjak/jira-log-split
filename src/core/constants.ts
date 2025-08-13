@@ -1,7 +1,7 @@
 // Global constants for adaptive concurrency and batching
 
 // When there is no saved per-host value, start here
-export const ADAPTIVE_DEFAULT_START_CONCURRENCY = 200;
+export const ADAPTIVE_DEFAULT_START_CONCURRENCY = 100;
 
 // Fallback when settings are unavailable (e.g., tests) or unreadable
 export const ADAPTIVE_FALLBACK_CONCURRENCY = 12;
@@ -25,7 +25,7 @@ export const JIRA_SEARCH_DESIRED_PAGE_SIZE = 1000;
 export const JIRA_DEFAULT_PAGINATION_CONCURRENCY = 8;
 
 // Dynamic batching limits for detailed Phase 2 fetch (keys -> changelog/comments)
-export const DETAILED_BATCH_MIN_KEYS = 50;
+export const DETAILED_BATCH_MIN_KEYS = 100;
 export const DETAILED_BATCH_MAX_KEYS = 1000;
 
 // TTL for caching permission-derived project filters (milliseconds)

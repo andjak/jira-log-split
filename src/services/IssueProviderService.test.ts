@@ -310,6 +310,42 @@ describe('IssueProviderService', () => {
       expect(both.userActivity?.lastCommentedByMeISO).toBe('2023-10-09T12:00:00.000Z');
       expect(both.userActivity?.lastActivityAtISO).toBe('2023-10-09T12:00:00.000Z');
     });
+
+    it('pipelined phase2: starts detailed fetch for first page while minimal phase continues (feature flag on)', async () => {
+      const period = { start: new Date('2023-10-01T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      const currentUserAccountId = 'me-1';
+      const page1: JiraIssue[] = [
+        { id: '1', key: 'K-1', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'X', name: 'X' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+      const page2: JiraIssue[] = [
+        { id: '2', key: 'K-2', fields: { summary: '', issuetype: { iconUrl: '', name: 'Task' }, project: { key: 'X', name: 'X' }, updated: '' }, changelog: { histories: [] as any } },
+      ];
+
+      (settingsServiceMock.get as any).mockImplementation(async (key: string) => {
+        if (key === 'issueSource') return 'activity';
+        if (key === 'includedProjects') return [];
+        if (key === 'pipelinedPhase2Enabled') return true;
+        return null;
+      });
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
+
+      // Use the paged API: simulate onPage receiving two pages
+      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (_jql: string, onPage: Function) => {
+        await onPage(page1, 0);
+        await onPage(page2, 1);
+        return [...page1, ...page2];
+      });
+      // Detailed fetch should be invoked twice, once per page
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([]);
+
+      const service = new IssueProviderService(jiraApiServiceMock, settingsServiceMock);
+      await service.getIssues(period);
+
+      const calls = (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      // First call keys should include only K-1
+      expect(calls[0][0]).toEqual(['K-1']);
+    });
   });
 });
 
