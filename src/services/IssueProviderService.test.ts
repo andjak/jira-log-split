@@ -330,7 +330,10 @@ describe('IssueProviderService', () => {
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
 
       // Use the paged API: simulate onPage receiving two pages
-      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (_jql: string, onPage: Function) => {
+      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (
+        _jql: string,
+        onPage: (issues: JiraIssue[], pageIndex: number, pageSize?: number) => Promise<void> | void,
+      ) => {
         await onPage(page1, 0);
         await onPage(page2, 1);
         return [...page1, ...page2];
@@ -364,7 +367,10 @@ describe('IssueProviderService', () => {
       (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({ accountId: currentUserAccountId });
 
       // Provide paged minimal results with explicit pageSize
-      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (_jql: string, onPage: Function) => {
+      (jiraApiServiceMock as any).fetchIssuesMinimalPaged = vi.fn(async (
+        _jql: string,
+        onPage: (issues: JiraIssue[], pageIndex: number, pageSize: number) => Promise<void> | void,
+      ) => {
         await onPage(minimalPage, 0, minimalPageSize);
         return minimalPage;
       });

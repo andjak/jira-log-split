@@ -247,7 +247,10 @@ export class JiraApiService {
    * Phase 2: Fetch detailed issue data for a set of keys, in batches.
    * Uses JQL key IN (...) to request batches with changelog/comments.
    */
-  public async fetchIssuesDetailedByKeys(keys: string[], options?: { batchSize?: number; concurrency?: number }): Promise<JiraIssue[]> {
+  public async fetchIssuesDetailedByKeys(
+    keys: string[],
+    options?: { batchSize?: number; concurrency?: number; onBatch?: (issues: JiraIssue[]) => Promise<void> | void },
+  ): Promise<JiraIssue[]> {
     if (!keys || keys.length === 0) return [];
     // Determine target concurrency first
     const { initialConcurrency } = await this.getStartingConcurrencyInfo();
@@ -306,6 +309,12 @@ export class JiraApiService {
         startAt += pageIssues.length;
       }
 
+      // Emit collected issues for this chunk as a single batch update
+      try {
+        if (options?.onBatch && collected.length > 0) await options.onBatch(collected.slice());
+      } catch {
+        // ignore onBatch errors
+      }
       return collected;
     });
 
