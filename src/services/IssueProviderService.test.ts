@@ -165,7 +165,9 @@ describe('IssueProviderService', () => {
       (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue(mockIssues);
       (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue(mockIssues);
 
-      await issueProviderService.getIssues(period);
+      // Expand the period so that a new delta is queried, ensuring JQL is rebuilt
+      const widerPeriod = { start: new Date('2023-09-30T00:00:00.000Z'), end: new Date('2023-10-31T23:59:59.999Z') };
+      await issueProviderService.getIssues(widerPeriod);
 
       // With no includedProjects, we should NOT add project in (...) even if user has permissions
       const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
@@ -178,6 +180,8 @@ describe('IssueProviderService', () => {
         return null;
       });
       (jiraApiServiceMock.fetchIssuesMinimal as any).mockClear();
+      // Recreate service to reset internal fetchedRanges cache so that a new query is executed
+      issueProviderService = new IssueProviderService(jiraApiServiceMock as any, settingsServiceMock as any);
       await issueProviderService.getIssues(period);
       const calledJql2 = (jiraApiServiceMock.fetchIssuesMinimal as any).mock.calls[0][0] as string;
       expect(calledJql2).toMatch(/project in \("P1", "P2"\)/);
