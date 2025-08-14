@@ -21,6 +21,7 @@ run_step() {
   fi
 }
 
+run_step "Lint-staged (auto-fix staged files)" npx --no-install lint-staged
 run_step "Lint" npm run lint
 run_step "Test" npm run test
 run_step "Build" npm run build
