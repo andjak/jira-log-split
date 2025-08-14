@@ -107,6 +107,8 @@ async function buildEngineWithSettings(baseUrl: string) {
 
 document.addEventListener('DOMContentLoaded', () => {
   const output = document.getElementById('output') as HTMLPreElement | null;
+  const progress = document.getElementById('progress') as HTMLPreElement | null;
+  const itemsList = document.getElementById('itemsList') as HTMLUListElement | null;
   const buildBtn = document.getElementById('buildSchedule') as HTMLButtonElement | null;
   const startInput = document.getElementById('startDate') as HTMLInputElement | null;
   const endInput = document.getElementById('endDate') as HTMLInputElement | null;
@@ -118,9 +120,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const ensureBaseUrl = async (): Promise<string> => detectJiraBaseUrl({ queryString: window.location.search });
 
+  const renderBar = (ratio: number, remainingSeconds: number | null) => {
+    if (!progress) return;
+    const width = 20;
+    const clamped = Math.max(0, Math.min(1, ratio));
+    const filled = Math.round(clamped * width);
+    const empty = width - filled;
+    const bar = `[${'#'.repeat(filled)}${' '.repeat(empty)}]`;
+    const rem = remainingSeconds != null ? ` remaining ${Math.max(0, Math.ceil(remainingSeconds))} s` : '';
+    progress.textContent = `${bar}${rem}`;
+  };
+
   const runBuild = async () => {
     try {
       output.textContent = 'Building...';
+      // Show an initial baseline ETA (~10s for ~20k issues) until first batch arrives
+      renderBar(0, 10);
 
       const baseUrl = await ensureBaseUrl();
       const { engine, period, settings, jira } = await buildEngineWithSettings(baseUrl);
@@ -142,7 +157,72 @@ document.addEventListener('DOMContentLoaded', () => {
         period.end = clamped.end;
       }
 
+      // Hook into streaming for progress when available
+      const pipelinedEnabled = await settings.get('pipelinedPhase2Enabled');
+      if (pipelinedEnabled && issueProviderSingleton) {
+        let firstBatchTs: number | null = null;
+
+        const renderItems = (issues: any[]) => {
+          if (!itemsList) return;
+          // Compute items relevant to current inputs period on the fly
+          const currentStart = startInput?.value ? new Date(`${startInput.value}T00:00:00.000Z`) : null;
+          const currentEnd = endInput?.value ? new Date(`${endInput.value}T23:59:59.999Z`) : null;
+          const filtered = Array.isArray(issues)
+            ? issues.filter((it) => {
+                if (!currentStart || !currentEnd) return true;
+                const a = it.userActivity?.lastActivityAtISO || it.fields?.updated || it.updated;
+                if (!a) return false;
+                const t = Date.parse(a);
+                return t >= currentStart.getTime() && t <= currentEnd.getTime();
+              })
+            : [];
+          itemsList.innerHTML = '';
+          for (const it of filtered) {
+            const li = document.createElement('li');
+            const typeName = it.fields?.issuetype?.name || it.issuetype?.name || '';
+            const key = it.key || '';
+            const summary = it.fields?.summary || it.summary || '';
+            li.textContent = `${typeName} ${key} — ${summary}`;
+            itemsList.appendChild(li);
+          }
+        };
+
+        const onUpdate = (issues: any[]) => {
+          renderItems(issues);
+        };
+
+        const onProgress = (info: { processedBatches: number; totalBatches: number; remainingBatches: number; etaSeconds: number | null }) => {
+          if (firstBatchTs == null) firstBatchTs = Date.now();
+          const ratio = info.totalBatches > 0 ? info.processedBatches / info.totalBatches : 0;
+          const remaining = info.etaSeconds != null ? info.etaSeconds : null;
+          renderBar(ratio, remaining ?? null);
+        };
+
+        await issueProviderSingleton.getIssuesByActivityStream(period, onUpdate, onProgress);
+      }
+
       const schedule = await engine.buildSchedule(period);
+      // After schedule is built, also render final items from cache (covers non-stream path)
+      if (issueProviderSingleton && itemsList) {
+        const currentUserId = await issueProviderSingleton.getCurrentUserAccountId();
+        const cached = (issueProviderSingleton as any).computeFromCache
+          ? (issueProviderSingleton as any).computeFromCache(period, currentUserId)
+          : [];
+        if (Array.isArray(cached) && cached.length > 0) {
+          const renderItems = (issues: any[]) => {
+            itemsList.innerHTML = '';
+            for (const it of issues) {
+              const li = document.createElement('li');
+              const typeName = it.fields?.issuetype?.name || it.issuetype?.name || '';
+              const key = it.key || '';
+              const summary = it.fields?.summary || it.summary || '';
+              li.textContent = `${typeName} ${key} — ${summary}`;
+              itemsList.appendChild(li);
+            }
+          };
+          renderItems(cached);
+        }
+      }
       cachedSchedule = schedule;
       submission = new WorklogSubmissionService(jira);
 

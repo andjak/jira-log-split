@@ -27,4 +27,7 @@ export const JIRA_DEFAULT_PAGINATION_CONCURRENCY = 8;
 // TTL for caching permission-derived project filters (milliseconds)
 export const PERMISSIONS_CACHE_TTL_MS = 60 * 60 * 1000; // 10 minutes
 
+// Initial ETA heuristic for Phase 2 before any detailed batch finishes (seconds per batch)
+export const ETA_INITIAL_SECONDS_PER_BATCH = 0.05;
+
 

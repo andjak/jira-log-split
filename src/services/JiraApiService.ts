@@ -170,7 +170,7 @@ export class JiraApiService {
    */
   public async fetchIssuesMinimalPaged(
     jql: string,
-    onPage: (issues: JiraIssue[], pageIndex: number, pageSize: number) => Promise<void> | void,
+    onPage: (issues: JiraIssue[], pageIndex: number, pageSize: number, total: number) => Promise<void> | void,
   ): Promise<JiraIssue[]> {
     const desiredPageSize = JIRA_SEARCH_DESIRED_PAGE_SIZE;
     const all: JiraIssue[] = [];
@@ -192,7 +192,7 @@ export class JiraApiService {
     const firstIssues = first.issues || [];
     all.push(...firstIssues);
     await this.debugLog('phase-minimal-page', { idx: 0, count: firstIssues.length });
-    await onPage(firstIssues, 0, (first.maxResults as number) || desiredPageSize);
+    await onPage(firstIssues, 0, (first.maxResults as number) || desiredPageSize, (first.total as number) || firstIssues.length);
 
     const total = typeof first.total === 'number' ? first.total : firstIssues.length;
     const pageSize = typeof first.maxResults === 'number' ? first.maxResults : desiredPageSize;
@@ -206,7 +206,7 @@ export class JiraApiService {
     await this.debugLog('phase-minimal-start', { initialConcurrency });
     let pageIndex = 1;
     const effectivePageSize = pageSize;
-    const tasks: Array<() => Promise<{ idx: number; issues: JiraIssue[]; pageSize: number }>> = starts.map((startAt) => async () => {
+    const tasks: Array<() => Promise<{ idx: number; issues: JiraIssue[]; pageSize: number; total: number }>> = starts.map((startAt) => async () => {
       const body = {
         jql,
         maxResults: pageSize,
@@ -218,7 +218,7 @@ export class JiraApiService {
         body: JSON.stringify(body),
       });
       const idx = pageIndex++;
-      return { idx, issues: data.issues || [], pageSize: effectivePageSize };
+      return { idx, issues: data.issues || [], pageSize: effectivePageSize, total };
     });
 
     const { results: pages } = await this.processQueueWithAdaptiveConcurrency(
@@ -228,7 +228,7 @@ export class JiraApiService {
         if (p && (p as any).issues && (p as any).issues.length) {
           all.push(...(p as any).issues);
           await this.debugLog('phase-minimal-page', { idx: (p as any).idx, count: (p as any).issues.length });
-          await onPage((p as any).issues, (p as any).idx, (p as any).pageSize ?? effectivePageSize);
+          await onPage((p as any).issues, (p as any).idx, (p as any).pageSize ?? effectivePageSize, (p as any).total ?? total);
         }
       },
     );
