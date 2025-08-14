@@ -13,6 +13,54 @@ export class IssueProviderService {
     private settingsService: SettingsService,
   ) {}
 
+  // Tracks previously fetched date ranges, merged on each request.
+  private fetchedRanges: Array<{ start: string; end: string }> = [];
+  // Cache of detailed issues fetched so far (used to serve requests fully covered by fetchedRanges)
+  private allFetchedIssues: JiraIssue[] = [];
+
+  private static mergeRanges(ranges: Array<{ start: string; end: string }>): Array<{ start: string; end: string }> {
+    if (ranges.length === 0) return [];
+    const norm = ranges
+      .map(r => ({ start: r.start, end: r.end }))
+      .sort((a, b) => a.start.localeCompare(b.start));
+    const merged: Array<{ start: string; end: string }> = [];
+    for (const r of norm) {
+      if (merged.length === 0) { merged.push({ ...r }); continue; }
+      const last = merged[merged.length - 1];
+      if (r.start <= IssueProviderService.nextDayIso(last.end)) {
+        if (r.end > last.end) last.end = r.end;
+      } else {
+        merged.push({ ...r });
+      }
+    }
+    return merged;
+  }
+
+  private static subtractRanges(
+    universe: { start: string; end: string },
+    covered: Array<{ start: string; end: string }>,
+  ): Array<{ start: string; end: string }> {
+    // Return parts of universe not covered by any covered ranges.
+    const result: Array<{ start: string; end: string }> = [];
+    let cursor = universe.start;
+    const ordered = IssueProviderService.mergeRanges(covered);
+    for (const r of ordered) {
+      if (r.end < cursor) continue;
+      if (r.start > universe.end) break;
+      if (r.start > cursor) {
+        result.push({ start: cursor, end: IssueProviderService.prevDayIso(r.start) });
+      }
+      if (r.end >= cursor) cursor = IssueProviderService.nextDayIso(r.end);
+      if (cursor > universe.end) return result;
+    }
+    if (cursor <= universe.end) result.push({ start: cursor, end: universe.end });
+    return result;
+  }
+
+  private static toIsoDay(d: Date): string { return d.toISOString().split('T')[0]; }
+  private static prevDayIso(iso: string): string { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().split('T')[0]; }
+  private static nextDayIso(iso: string): string { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().split('T')[0]; }
+
   // Utility: derive per-day active issue keys for a user in a period
   public derivePerDayActive(issues: JiraIssue[], period: { start: Date; end: Date }, userAccountId: string): Record<string, string[]> {
     const perDay: Record<string, Set<string>> = {};
@@ -48,70 +96,85 @@ export class IssueProviderService {
     return [];
   }
 
-  private async getIssuesByActivity(period: Period): Promise<JiraIssue[]> {
-    // Phase 1: fetch minimal candidates using only the time window
-    const currentUser = await this.jiraApiService.getCurrentUser();
-
-    const jqlFilters = [
-      `updated >= "${this.formatDateForJql(period.start)}"`,
-      `updated <= "${this.formatDateForJql(period.end)}"`,
-    ];
-    // Optional user-configured project filter
-    const includedProjects = await this.settingsService.get('includedProjects');
-    if (Array.isArray(includedProjects) && includedProjects.length > 0) {
-      // If user explicitly configured projects, use them; otherwise default to date-only JQL
-      jqlFilters.push(`project in ("${includedProjects.join('", "')}")`);
+  private upsertIssuesIntoCache(issues: JiraIssue[]): void {
+    if (!issues || issues.length === 0) return;
+    const map = new Map<string, JiraIssue>();
+    for (const existing of this.allFetchedIssues) map.set(existing.key, existing);
+    for (const i of issues) {
+      if (i && i.key) map.set(i.key, i);
     }
-    const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
+    this.allFetchedIssues = Array.from(map.values());
+  }
 
-    const pipelined = await this.settingsService.get('pipelinedPhase2Enabled');
-    let allIssues: JiraIssue[];
-    if (pipelined && (this.jiraApiService as any).fetchIssuesMinimalPaged) {
-      const collectedKeys: string[] = [];
-      const pageDetailPromises: Promise<JiraIssue[]>[] = [];
-      // Start Phase 2 calls as pages arrive; do not await until all pages scheduled
-      await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[], _idx: number, pageSize: number) => {
-        const keys = page.map((i) => i.key).filter(Boolean);
-        collectedKeys.push(...keys);
-        if (keys.length > 0) {
-          // Use the minimal page size as the detailed batch size for best throughput
-          pageDetailPromises.push(this.jiraApiService.fetchIssuesDetailedByKeys(keys, { batchSize: pageSize }));
-        }
-      });
-      const pageDetails = await Promise.all(pageDetailPromises);
-      allIssues = pageDetails.flat();
-      // If, for any reason, minimal returned issues not covered (shouldn't happen), fallback to full fetch
-      if (allIssues.length === 0 && collectedKeys.length > 0) {
-        allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(collectedKeys);
-      }
-    } else {
-      const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
-      const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
-      allIssues = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys);
-    }
-
-    // Compute user activity timestamps (updates via changelog, and comments)
-    for (const issue of allIssues) {
-      const lastUpdatedByMeISO = this.findLastChangeByUser(issue, currentUser.accountId, period);
-      const lastCommentedByMeISO = this.findLastCommentByUser(issue, currentUser.accountId, period);
+  private computeFromCache(period: Period, currentUserAccountId: string): JiraIssue[] {
+    const results: JiraIssue[] = [];
+    for (const issue of this.allFetchedIssues) {
+      const lastUpdatedByMeISO = this.findLastChangeByUser(issue, currentUserAccountId, period);
+      const lastCommentedByMeISO = this.findLastCommentByUser(issue, currentUserAccountId, period);
       const lastActivityAtISO = this.pickLatestISO([lastUpdatedByMeISO, lastCommentedByMeISO]);
-      const activity = issue.userActivity ?? (issue.userActivity = {} as any);
-      activity.lastUpdatedByMeISO = lastUpdatedByMeISO || undefined;
-      activity.lastCommentedByMeISO = lastCommentedByMeISO || undefined;
-      activity.lastActivityAtISO = lastActivityAtISO || undefined;
+      if (!lastActivityAtISO) continue;
+      const clone: JiraIssue = { ...issue, userActivity: { lastUpdatedByMeISO: lastUpdatedByMeISO || undefined, lastCommentedByMeISO: lastCommentedByMeISO || undefined, lastActivityAtISO: lastActivityAtISO || undefined } } as JiraIssue;
+      results.push(clone);
     }
-
-    // Keep only issues where user had some activity (update or comment)
-    const withActivity = allIssues.filter((i) => Boolean(i.userActivity?.lastActivityAtISO));
-
-    // Sort by user's last activity descending
-    withActivity.sort((a, b) => {
+    results.sort((a, b) => {
       const ta = a.userActivity?.lastActivityAtISO ? Date.parse(a.userActivity.lastActivityAtISO) : 0;
       const tb = b.userActivity?.lastActivityAtISO ? Date.parse(b.userActivity.lastActivityAtISO) : 0;
       return tb - ta;
     });
+    return results;
+  }
 
-    return withActivity;
+  private async getIssuesByActivity(period: Period): Promise<JiraIssue[]> {
+    // Phase 1: fetch minimal candidates using only the time window; but only for delta days not yet fetched
+    const currentUser = await this.jiraApiService.getCurrentUser();
+    const universe = { start: IssueProviderService.toIsoDay(period.start), end: IssueProviderService.toIsoDay(period.end) };
+    const deltas = IssueProviderService.subtractRanges(universe, this.fetchedRanges);
+    if (deltas.length === 0) {
+      // No new fetch needed; recalc from cache for requested period
+      return this.computeFromCache(period, currentUser.accountId);
+    }
+
+    const includedProjects = await this.settingsService.get('includedProjects');
+    const projectClause = Array.isArray(includedProjects) && includedProjects.length > 0
+      ? ` AND project in ("${includedProjects.join('", "')}")`
+      : '';
+
+    const pipelined = await this.settingsService.get('pipelinedPhase2Enabled');
+    const newlyFetchedIssues: JiraIssue[] = [];
+
+    for (const delta of deltas) {
+      const jql = `updated >= "${delta.start}" AND updated <= "${delta.end}"${projectClause} ORDER BY updated DESC`;
+      try {
+        // eslint-disable-next-line no-console
+        console.info('[AC] delta-query', delta);
+      } catch {
+        // ignore logging errors in non-extension test envs
+      }
+      if (pipelined && (this.jiraApiService as any).fetchIssuesMinimalPaged) {
+        const pageDetailPromises: Promise<JiraIssue[]>[] = [];
+        await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[], _idx: number, pageSize: number) => {
+          const keys = page.map((i) => i.key).filter(Boolean);
+          if (keys.length > 0) {
+            pageDetailPromises.push(this.jiraApiService.fetchIssuesDetailedByKeys(keys, { batchSize: pageSize }));
+          }
+        });
+        const pageDetails = await Promise.all(pageDetailPromises);
+        newlyFetchedIssues.push(...pageDetails.flat());
+      } else {
+        const minimalIssues = await this.jiraApiService.fetchIssuesMinimal(jql);
+        const candidateKeys = minimalIssues.map((i) => i.key).filter(Boolean);
+        const detailed = await this.jiraApiService.fetchIssuesDetailedByKeys(candidateKeys);
+        newlyFetchedIssues.push(...detailed);
+      }
+      // Merge fetched delta into cache
+      this.fetchedRanges = IssueProviderService.mergeRanges([...this.fetchedRanges, delta]);
+    }
+
+    // Upsert into cache
+    this.upsertIssuesIntoCache(newlyFetchedIssues);
+
+    // Compute user activity timestamps and filter/sort for the requested period using cache
+    return this.computeFromCache(period, currentUser.accountId);
   }
 
   // Streaming variant for UI: emits sorted arrays on each batch insert using binary insertion
