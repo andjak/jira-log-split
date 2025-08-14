@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "lint": "eslint --ext .ts,.tsx src",
     "lint:fix": "eslint --ext .ts,.tsx src --fix",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "check:all": "bash scripts/check-all.sh",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
@@ -34,6 +36,7 @@
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-vitest": "^0.5.4",
+    "husky": "^9.1.7",
     "jsdom": "^26.1.0",
     "typescript": "^5.9.2",
     "vite": "^6.3.5",

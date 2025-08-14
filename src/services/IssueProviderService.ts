@@ -1,6 +1,7 @@
 import { JiraApiService } from './JiraApiService';
 import { SettingsService } from './SettingsService';
 import { JiraIssue } from '../core/jira-types';
+import { ETA_INITIAL_SECONDS_PER_BATCH } from '../core/constants';
 
 interface Period {
   start: Date;
@@ -148,7 +149,7 @@ export class IssueProviderService {
         // eslint-disable-next-line no-console
         console.info('[AC] delta-query', delta);
       } catch {
-        // ignore logging errors in non-extension test envs
+        /* no-op */
       }
       if (pipelined && (this.jiraApiService as any).fetchIssuesMinimalPaged) {
         const pageDetailPromises: Promise<JiraIssue[]>[] = [];
@@ -181,21 +182,32 @@ export class IssueProviderService {
   public async getIssuesByActivityStream(
     period: Period,
     onUpdate: (issues: JiraIssue[]) => void,
+    onProgress?: (info: { processedBatches: number; totalBatches: number; remainingBatches: number; etaSeconds: number | null }) => void,
   ): Promise<JiraIssue[]> {
     const currentUser = await this.jiraApiService.getCurrentUser();
     const currentUserId = currentUser.accountId;
 
-    const jqlFilters = [
-      `updated >= "${this.formatDateForJql(period.start)}"`,
-      `updated <= "${this.formatDateForJql(period.end)}"`,
-    ];
     const includedProjects = await this.settingsService.get('includedProjects');
-    if (Array.isArray(includedProjects) && includedProjects.length > 0) {
-      jqlFilters.push(`project in ("${includedProjects.join('", "')}")`);
+    const universe = { start: IssueProviderService.toIsoDay(period.start), end: IssueProviderService.toIsoDay(period.end) };
+    const deltas = IssueProviderService.subtractRanges(universe, this.fetchedRanges);
+    if (deltas.length === 0) {
+      // Serve from cache without network; still emit one update so UI paints
+      const cached = this.computeFromCache(period, currentUserId);
+      onUpdate(cached.slice());
+      return cached;
     }
-    const jql = `${jqlFilters.join(' AND ')} ORDER BY updated DESC`;
 
-    const accumulator: JiraIssue[] = [];
+    // Seed list with already cached, period-relevant issues so UI keeps them visible
+    const initialCached = this.computeFromCache(period, currentUserId);
+    const accumulator: JiraIssue[] = initialCached.slice();
+    const seenKeys = new Set<string>(accumulator.map((it) => it.key));
+    let totalBatches: number | null = 0;
+    let processedBatches = 0;
+    let phase1Done = false;
+    let measuredStartAt: number | null = null;
+    let processedAtMeasureStart = 0;
+    let avgSecondsPerBatch: number | null = null;
+    let prevEtaSeconds: number | null = null;
 
     const insertSorted = (issue: JiraIssue) => {
       const ts = issue.userActivity?.lastActivityAtISO ? Date.parse(issue.userActivity.lastActivityAtISO) : 0;
@@ -222,19 +234,101 @@ export class IssueProviderService {
         activity.lastUpdatedByMeISO = lastUpdatedByMeISO || undefined;
         activity.lastCommentedByMeISO = lastCommentedByMeISO || undefined;
         activity.lastActivityAtISO = lastActivityAtISO || undefined;
+        if (issue.key && seenKeys.has(issue.key)) {
+          // Skip duplicates already present from cache-seeded list
+          continue;
+        }
         insertSorted(issue);
+        if (issue.key) seenKeys.add(issue.key);
       }
       onUpdate(accumulator.slice());
+      processedBatches += 1;
+      if (totalBatches && totalBatches > 0) {
+        const remainingBatches = Math.max(0, totalBatches - processedBatches);
+        let etaSeconds: number | null;
+        if (phase1Done) {
+          if (measuredStartAt == null) {
+            measuredStartAt = Date.now();
+            processedAtMeasureStart = processedBatches;
+          }
+          const measuredProcessed = Math.max(0, processedBatches - processedAtMeasureStart);
+          const elapsedMs = Date.now() - measuredStartAt;
+          const avgPerBatchMs = measuredProcessed > 0 ? elapsedMs / measuredProcessed : 0;
+          avgSecondsPerBatch = avgPerBatchMs > 0 ? avgPerBatchMs / 1000 : null;
+          const instantaneous = avgSecondsPerBatch != null ? remainingBatches * avgSecondsPerBatch : null;
+          if (instantaneous != null) {
+            if (prevEtaSeconds == null) {
+              etaSeconds = instantaneous;
+            } else {
+              const alpha = 0.3;
+              etaSeconds = alpha * instantaneous + (1 - alpha) * prevEtaSeconds;
+            }
+            prevEtaSeconds = etaSeconds;
+          } else {
+            etaSeconds = null;
+          }
+        } else {
+          // Before Phase 1 completes, show baseline ETA so the UI keeps a numeric value visible
+          etaSeconds = remainingBatches * ETA_INITIAL_SECONDS_PER_BATCH;
+          prevEtaSeconds = etaSeconds;
+        }
+        if (onProgress) {
+          try { onProgress({ processedBatches, totalBatches, remainingBatches, etaSeconds }); } catch { /* no-op */ }
+        }
+      }
     };
 
-    await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[], _idx: number, pageSize: number) => {
-      const keys = page.map((i) => i.key).filter(Boolean);
-      if (keys.length === 0) return;
-      await this.jiraApiService.fetchIssuesDetailedByKeys(keys, {
-        batchSize: pageSize,
-        onBatch: async (issues) => processBatch(issues),
+    for (const delta of deltas) {
+      const jqlParts = [
+        `updated >= "${delta.start}"`,
+        `updated <= "${delta.end}"`,
+      ];
+      if (Array.isArray(includedProjects) && includedProjects.length > 0) {
+        jqlParts.push(`project in ("${includedProjects.join('", "')}")`);
+      }
+      const jql = `${jqlParts.join(' AND ')} ORDER BY updated DESC`;
+      try {
+        // eslint-disable-next-line no-console
+        console.info('[AC] delta-query', delta);
+      } catch { /* no-op */ }
+      await (this.jiraApiService as any).fetchIssuesMinimalPaged(jql, async (page: JiraIssue[], idx: number, pageSize: number, total: number) => {
+        if (idx === 0) {
+          const totalCount = total ?? page.length;
+          const pages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 0;
+          totalBatches = (totalBatches ?? 0) + pages;
+          if (pages > 0 && onProgress) {
+            const remainingBatches = Math.max(0, (totalBatches ?? 0) - processedBatches);
+            const etaSeconds = remainingBatches * ETA_INITIAL_SECONDS_PER_BATCH;
+            try { onProgress({ processedBatches, totalBatches: totalBatches ?? 0, remainingBatches, etaSeconds }); } catch { /* no-op */ }
+          }
+        }
+        const keys = page.map((i) => i.key).filter(Boolean);
+        if (keys.length === 0) return;
+        await this.jiraApiService.fetchIssuesDetailedByKeys(keys, {
+          batchSize: pageSize,
+          onBatch: async (issues) => processBatch(issues),
+        });
       });
-    });
+      // After finishing this delta, merge it into fetchedRanges
+      this.fetchedRanges = IssueProviderService.mergeRanges([...this.fetchedRanges, delta]);
+    }
+    // Mark end of Phase 1 across all deltas; start measurement window now
+    phase1Done = true;
+    measuredStartAt = Date.now();
+    processedAtMeasureStart = processedBatches;
+
+    // Upsert full accumulator into cache once to keep BE cache consistent without per-batch overhead
+    this.upsertIssuesIntoCache(accumulator);
+
+    // Emit a final progress snapshot to ensure consumers receive completion state
+    if (onProgress && totalBatches !== null && (totalBatches as number) > 0) {
+      const remainingBatches = Math.max(0, (totalBatches as number) - processedBatches);
+      // If only one batch in total, when we finish it remaining becomes 0 and ETA should be 0
+      const etaSeconds = remainingBatches === 0
+        ? 0
+        : (avgSecondsPerBatch != null ? remainingBatches * avgSecondsPerBatch : null);
+      try { onProgress({ processedBatches, totalBatches: totalBatches as number, remainingBatches, etaSeconds }); } catch { /* no-op */ }
+    }
 
     return accumulator;
   }

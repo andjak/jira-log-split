@@ -17,8 +17,11 @@
       <label>End (YYYY-MM-DD): <input id="endDate" placeholder="YYYY-MM-DD" /></label>
       <button id="buildSchedule">Build</button>
     </div>
+    <pre id="progress" style="white-space: pre; font-family: monospace; margin: 6px 0;">[          ]</pre>
     <div id="app">
         <h1>Jira Smart Work Log</h1>
+        <h3>Found items (temporary)</h3>
+        <ul id="itemsList"></ul>
         <pre id="output">Click the button to build a schedule...</pre>
     </div>
     <script type="module" src="./index.ts"></script>
