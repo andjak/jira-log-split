@@ -1039,5 +1039,219 @@ describe("IssueProviderService", () => {
       // In this later period, only time-tracking update exists; should be excluded
       expect(issues2.map((i) => i.key)).toEqual([]);
     });
+
+    it("excludes issue when only assignee change by me within period", async () => {
+      const period = {
+        start: new Date("2025-08-01T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-assign1";
+      const issue: JiraIssue = {
+        id: "a1",
+        key: "ASGN-ONLY",
+        fields: {
+          summary: "",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-05T10:00:00.000Z",
+              items: [
+                {
+                  field: "assignee",
+                  fieldtype: "jira",
+                  fromString: "X",
+                  toString: "Y",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(async (k: string) =>
+        k === "issueSource" ? "activity" : k === "includedProjects" ? [] : null,
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues).toHaveLength(0);
+    });
+
+    it("excludes issue when assignee change and worklog change only", async () => {
+      const period = {
+        start: new Date("2025-08-01T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-assign2";
+      const issue: JiraIssue = {
+        id: "a2",
+        key: "ASGN-TT",
+        fields: {
+          summary: "",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-06T10:00:00.000Z",
+              items: [
+                {
+                  field: "assignee",
+                  fieldtype: "jira",
+                  fromString: "X",
+                  toString: "Y",
+                },
+                {
+                  field: "Time Spent",
+                  fieldtype: "jira",
+                  fromString: "0",
+                  toString: "1h",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(async (k: string) =>
+        k === "issueSource" ? "activity" : k === "includedProjects" ? [] : null,
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues).toHaveLength(0);
+    });
+
+    it("includes issue when assignee change plus a non time-tracking content change (description)", async () => {
+      const period = {
+        start: new Date("2025-08-01T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-assign3";
+      const issue: JiraIssue = {
+        id: "a3",
+        key: "ASGN-DESC",
+        fields: {
+          summary: "",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-07T10:00:00.000Z",
+              items: [
+                {
+                  field: "assignee",
+                  fieldtype: "jira",
+                  fromString: "X",
+                  toString: "Y",
+                },
+                {
+                  field: "description",
+                  fieldtype: "jira",
+                  fromString: "old",
+                  toString: "new",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(async (k: string) =>
+        k === "issueSource" ? "activity" : k === "includedProjects" ? [] : null,
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues.map((i) => i.key)).toEqual(["ASGN-DESC"]);
+    });
+
+    it("includes issue when assignee+worklog change but also my comment exists in period", async () => {
+      const period = {
+        start: new Date("2025-08-01T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-assign4";
+      const issue: JiraIssue = {
+        id: "a4",
+        key: "ASGN-TT-COMMENT",
+        fields: {
+          summary: "",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+          comment: {
+            comments: [
+              {
+                id: "c1",
+                author: { accountId: me, displayName: "Me" },
+                created: "2025-08-10T09:00:00.000Z",
+              },
+            ],
+            maxResults: 1,
+            total: 1,
+            startAt: 0,
+          },
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-06T10:00:00.000Z",
+              items: [
+                {
+                  field: "assignee",
+                  fieldtype: "jira",
+                  fromString: "X",
+                  toString: "Y",
+                },
+                {
+                  field: "Time Spent",
+                  fieldtype: "jira",
+                  fromString: "0",
+                  toString: "1h",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(async (k: string) =>
+        k === "issueSource" ? "activity" : k === "includedProjects" ? [] : null,
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues.map((i) => i.key)).toEqual(["ASGN-TT-COMMENT"]);
+    });
   });
 });

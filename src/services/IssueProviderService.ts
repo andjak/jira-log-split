@@ -38,28 +38,24 @@ export class IssueProviderService {
     "worklog",
     "worklog id",
   ]);
+  // Fields considered administrative-only for activity purposes
+  private static readonly ASSIGNEE_ONLY_FIELDS = new Set<string>(["assignee"]);
 
-  private static isTimeTrackingFieldName(
-    name: string | undefined | null,
-  ): boolean {
-    if (!name) return false;
-    const n = name.toLowerCase();
-    // Explicit known fields OR heuristic tokens frequently used in Jira for time tracking
-    return (
-      IssueProviderService.TIME_TRACKING_FIELDS.has(n) ||
-      n.includes("time") ||
-      n.includes("estimate") ||
-      n.includes("worklog")
-    );
-  }
-
-  private static isTimeTrackingChange(
+  private static isOnlyTimeTrackingOrAssigneeChange(
     items: Array<{ field?: string }> | undefined | null,
   ): boolean {
     if (!Array.isArray(items) || items.length === 0) return false;
-    return items.every((it) =>
-      IssueProviderService.isTimeTrackingFieldName(it?.field),
-    );
+    return items.every((it) => {
+      const f = it?.field || "";
+      const n = f.toLowerCase();
+      return (
+        IssueProviderService.TIME_TRACKING_FIELDS.has(n) ||
+        n.includes("time") ||
+        n.includes("estimate") ||
+        n.includes("worklog") ||
+        IssueProviderService.ASSIGNEE_ONLY_FIELDS.has(n)
+      );
+    });
   }
 
   private static mergeRanges(
@@ -596,11 +592,10 @@ export class IssueProviderService {
         createdMs <= period.end.getTime();
       const byMe = h.author.accountId === currentUserId;
       const hasItems = Array.isArray(h.items) && h.items.length > 0;
-      // Exclude changes that are only time tracking updates
-      const isOnlyTimeTracking = IssueProviderService.isTimeTrackingChange(
-        h.items as any,
-      );
-      if (inRange && byMe && hasItems && !isOnlyTimeTracking) {
+      // Exclude changes that are only assignee and/or time tracking updates
+      const isAssigneeOrTimeOnly =
+        IssueProviderService.isOnlyTimeTrackingOrAssigneeChange(h.items as any);
+      if (inRange && byMe && hasItems && !isAssigneeOrTimeOnly) {
         if (!last || createdMs > Date.parse(last)) last = h.created;
       }
     }
