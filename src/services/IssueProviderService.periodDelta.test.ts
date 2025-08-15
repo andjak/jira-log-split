@@ -110,7 +110,7 @@ describe("IssueProviderService period delta querying", () => {
     expect(d.end).toBeUndefined();
   });
 
-  it("remembers earlier periods and only queries newly uncovered earlier start", async () => {
+  it("remembers earlier periods and only queries earlier start; trailing already covered by first open-ended fetch", async () => {
     // 01 Jun - 30 Jun, then 01 May - 31 May
     await service.getIssues({
       start: iso("2023-06-01"),
@@ -126,15 +126,11 @@ describe("IssueProviderService period delta querying", () => {
       start: iso("2023-06-15"),
       end: iso("2023-07-15"),
     });
-    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
-    const jql = jiraApiServiceMock.fetchIssuesMinimalPaged.mock
-      .calls[0][0] as string;
-    const d = dateFromJql(jql);
-    expect(d.start).toBe("2023-07-01");
-    expect(d.end).toBeUndefined();
+    // With first fetch being open-ended from 2023-06-01, 2023-07-01..2023-07-15 is already covered
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).not.toHaveBeenCalled();
   });
 
-  it("extending period end does not change query (open-ended)", async () => {
+  it("extending period end does not trigger new fetch (open-ended first fetch covers tail)", async () => {
     await service.getIssues({
       start: iso("2023-06-01"),
       end: iso("2023-06-30"),
@@ -144,15 +140,11 @@ describe("IssueProviderService period delta querying", () => {
       start: iso("2023-06-15"),
       end: iso("2023-07-31"),
     });
-    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
-    const jql = jiraApiServiceMock.fetchIssuesMinimalPaged.mock
-      .calls[0][0] as string;
-    const d = dateFromJql(jql);
-    expect(d.start).toBe("2023-07-01");
-    expect(d.end).toBeUndefined();
+    // No new fetch needed; tail is already covered by initial open-ended query
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).not.toHaveBeenCalled();
   });
 
-  it("expansion around previous period queries both leading and trailing deltas (open-ended => same start twice)", async () => {
+  it("expansion around previous period queries only the leading earlier delta (open-ended covers trailing)", async () => {
     // First baseline: 01 Jun - 30 Jun
     await service.getIssues({
       start: iso("2023-06-01"),
@@ -164,15 +156,11 @@ describe("IssueProviderService period delta querying", () => {
       start: iso("2023-05-01"),
       end: iso("2023-07-31"),
     });
-    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(2);
-    const call1 = dateFromJql(
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
+    const call = dateFromJql(
       jiraApiServiceMock.fetchIssuesMinimalPaged.mock.calls[0][0] as string,
     );
-    const call2 = dateFromJql(
-      jiraApiServiceMock.fetchIssuesMinimalPaged.mock.calls[1][0] as string,
-    );
-    const starts = [call1, call2].map((c) => c.start).sort();
-    expect(starts).toEqual(["2023-05-01", "2023-07-01"]);
+    expect(call.start).toBe("2023-05-01");
   });
 
   it("shrinking to an already covered period returns computed results from cache without new queries", async () => {

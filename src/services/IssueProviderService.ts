@@ -18,6 +18,8 @@ export class IssueProviderService {
   private fetchedRanges: Array<{ start: string; end: string }> = [];
   // Cache of detailed issues fetched so far (used to serve requests fully covered by fetchedRanges)
   private allFetchedIssues: JiraIssue[] = [];
+  // If set, indicates we have fetched issues for all updates from this day forward (open-ended)
+  private openEndedStartISO: string | null = null;
 
   private static mergeRanges(
     ranges: Array<{ start: string; end: string }>,
@@ -202,10 +204,25 @@ export class IssueProviderService {
     const newlyFetchedIssues: JiraIssue[] = [];
 
     for (const delta of deltas) {
-      const jql = `updated >= "${delta.start}"${projectClause} ORDER BY updated DESC`;
+      // If we already have open-ended coverage, only fetch earlier slice up to that start; skip trailing
+      if (this.openEndedStartISO && delta.start >= this.openEndedStartISO) {
+        continue;
+      }
+      const upperBoundISO = this.openEndedStartISO || null;
+      const jqlParts = [`updated >= "${delta.start}"`];
+      if (upperBoundISO) jqlParts.push(`updated < "${upperBoundISO}"`);
+      const jql = `${jqlParts.join(" AND ")}${projectClause} ORDER BY updated DESC`;
       try {
         // eslint-disable-next-line no-console
-        console.info("[AC] delta-query", delta);
+        console.info(
+          "[AC] delta-query",
+          upperBoundISO
+            ? {
+                start: delta.start,
+                end: IssueProviderService.prevDayIso(upperBoundISO),
+              }
+            : { start: delta.start },
+        );
       } catch {
         /* no-op */
       }
@@ -239,6 +256,8 @@ export class IssueProviderService {
         delta,
       ]);
     }
+    // If this was the first open-ended fetch, remember the start so future queries are bounded and non-overlapping
+    if (!this.openEndedStartISO) this.openEndedStartISO = universe.start;
 
     // Upsert into cache
     this.upsertIssuesIntoCache(newlyFetchedIssues);
@@ -391,14 +410,28 @@ export class IssueProviderService {
     };
 
     for (const delta of deltas) {
+      // If we already have open-ended coverage, only fetch earlier slice up to that start; skip trailing
+      if (this.openEndedStartISO && delta.start >= this.openEndedStartISO) {
+        continue;
+      }
+      const upperBoundISO = this.openEndedStartISO || null;
       const jqlParts = [`updated >= "${delta.start}"`];
+      if (upperBoundISO) jqlParts.push(`updated < "${upperBoundISO}"`);
       if (Array.isArray(includedProjects) && includedProjects.length > 0) {
         jqlParts.push(`project in ("${includedProjects.join('", "')}")`);
       }
       const jql = `${jqlParts.join(" AND ")} ORDER BY updated DESC`;
       try {
         // eslint-disable-next-line no-console
-        console.info("[AC] delta-query", delta);
+        console.info(
+          "[AC] delta-query",
+          upperBoundISO
+            ? {
+                start: delta.start,
+                end: IssueProviderService.prevDayIso(upperBoundISO),
+              }
+            : { start: delta.start },
+        );
       } catch {
         /* no-op */
       }
@@ -447,6 +480,8 @@ export class IssueProviderService {
         delta,
       ]);
     }
+    // If this was the first open-ended fetch, remember the start so future queries are bounded and non-overlapping
+    if (!this.openEndedStartISO) this.openEndedStartISO = universe.start;
     // Mark end of Phase 1 across all deltas; start measurement window now
     phase1Done = true;
     measuredStartAt = Date.now();
