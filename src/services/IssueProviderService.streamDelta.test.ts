@@ -228,4 +228,51 @@ describe("IssueProviderService streaming period changes", () => {
     expect((jira as any).fetchIssuesMinimalPaged).not.toHaveBeenCalled();
     expect(Array.isArray(res)).toBe(true);
   });
+
+  it("after open-ended first fetch, later covered day emits cached items and does not refetch", async () => {
+    // 1) First, fetch for 2025-08-01 (open-ended). Minimal returns K-1 (08-01) and K-2 (08-05)
+    const minimalPaged = vi
+      .spyOn(jira as any, "fetchIssuesMinimalPaged")
+      .mockImplementationOnce(async (...args: any[]) => {
+        const onPage = args[1];
+        await onPage([{ key: "K-1" }, { key: "K-2" }], 0, 100, 2);
+        return [];
+      });
+    vi.spyOn(jira, "fetchIssuesDetailedByKeys").mockImplementationOnce(
+      async (_keys: string[], opts?: any) => {
+        const det = [
+          makeIssue("K-1", "2025-08-01T08:00:00.000Z"),
+          makeIssue("K-2", "2025-08-05T09:00:00.000Z"),
+        ];
+        if (opts?.onBatch) await opts.onBatch(det);
+        return det as any;
+      },
+    );
+
+    await svc.getIssuesByActivityStream(
+      {
+        start: new Date("2025-08-01T00:00:00Z"),
+        end: new Date("2025-08-01T23:59:59Z"),
+      },
+      () => {},
+    );
+
+    // 2) Now query 2025-08-05 (already covered by open-ended fetch). Expect no new minimal fetch and only K-2
+    minimalPaged.mockClear();
+    const updates: AnyIssue[][] = [];
+    const res = await svc.getIssuesByActivityStream(
+      {
+        start: new Date("2025-08-05T00:00:00Z"),
+        end: new Date("2025-08-05T23:59:59Z"),
+      },
+      (iss) => updates.push(iss),
+    );
+
+    expect(minimalPaged).not.toHaveBeenCalled();
+    const keys = res.map((i: AnyIssue) => i.key).sort();
+    expect(keys).toEqual(["K-2"]);
+    expect(updates.length).toBeGreaterThanOrEqual(1);
+    const lastUpdateKeys = updates[updates.length - 1].map((i) => i.key).sort();
+    expect(lastUpdateKeys).toEqual(["K-2"]);
+  });
 });

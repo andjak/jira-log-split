@@ -409,11 +409,15 @@ export class IssueProviderService {
       }
     };
 
+    let performedFetch = false;
+    const fetchedForCache: JiraIssue[] = [];
     for (const delta of deltas) {
-      // If we already have open-ended coverage, only fetch earlier slice up to that start; skip trailing
+      // If tail is already covered by a previous open-ended fetch, skip querying and rely on cache
       if (this.openEndedStartISO && delta.start >= this.openEndedStartISO) {
         continue;
       }
+      performedFetch = true;
+      // If we already have open-ended coverage, only fetch earlier slice up to that start; skip trailing
       const upperBoundISO = this.openEndedStartISO || null;
       const jqlParts = [`updated >= "${delta.start}"`];
       if (upperBoundISO) jqlParts.push(`updated < "${upperBoundISO}"`);
@@ -470,7 +474,10 @@ export class IssueProviderService {
           if (keys.length === 0) return;
           await this.jiraApiService.fetchIssuesDetailedByKeys(keys, {
             batchSize: pageSize,
-            onBatch: async (issues) => processBatch(issues),
+            onBatch: async (issues) => {
+              if (issues && issues.length) fetchedForCache.push(...issues);
+              await processBatch(issues);
+            },
           });
         },
       );
@@ -480,6 +487,12 @@ export class IssueProviderService {
         delta,
       ]);
     }
+    // If we skipped all deltas due to open-ended coverage, still emit one update from cache
+    if (!performedFetch) {
+      onUpdate(initialCached.slice());
+      // No network was performed; return cached result immediately
+      return initialCached;
+    }
     // If this was the first open-ended fetch, remember the start so future queries are bounded and non-overlapping
     if (!this.openEndedStartISO) this.openEndedStartISO = universe.start;
     // Mark end of Phase 1 across all deltas; start measurement window now
@@ -487,7 +500,9 @@ export class IssueProviderService {
     measuredStartAt = Date.now();
     processedAtMeasureStart = processedBatches;
 
-    // Upsert full accumulator into cache once to keep BE cache consistent without per-batch overhead
+    // Upsert all fetched detailed issues to cache so later covered days can be served from cache
+    if (fetchedForCache.length > 0) this.upsertIssuesIntoCache(fetchedForCache);
+    // Also upsert the accumulator with user-activity annotations
     this.upsertIssuesIntoCache(accumulator);
 
     // Emit a final progress snapshot to ensure consumers receive completion state
