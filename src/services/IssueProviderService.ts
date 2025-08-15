@@ -256,8 +256,10 @@ export class IssueProviderService {
         delta,
       ]);
     }
-    // If this was the first open-ended fetch, remember the start so future queries are bounded and non-overlapping
-    if (!this.openEndedStartISO) this.openEndedStartISO = universe.start;
+    // Track earliest start seen so far to represent open-ended coverage from that day forward
+    if (!this.openEndedStartISO || universe.start < this.openEndedStartISO) {
+      this.openEndedStartISO = universe.start;
+    }
 
     // Upsert into cache
     this.upsertIssuesIntoCache(newlyFetchedIssues);
@@ -493,8 +495,10 @@ export class IssueProviderService {
       // No network was performed; return cached result immediately
       return initialCached;
     }
-    // If this was the first open-ended fetch, remember the start so future queries are bounded and non-overlapping
-    if (!this.openEndedStartISO) this.openEndedStartISO = universe.start;
+    // Track earliest start seen so far to represent open-ended coverage from that day forward
+    if (!this.openEndedStartISO || universe.start < this.openEndedStartISO) {
+      this.openEndedStartISO = universe.start;
+    }
     // Mark end of Phase 1 across all deltas; start measurement window now
     phase1Done = true;
     measuredStartAt = Date.now();

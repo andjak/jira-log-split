@@ -77,6 +77,71 @@ describe("IssueProviderService period delta querying", () => {
     expect(d2.end).toBeUndefined();
   });
 
+  it("earliest start across sessions is used as upper bound for later queries (bugfix #1)", async () => {
+    // First UI: 05 Aug - 15 Aug  => open-ended from 2023-08-05
+    await service.getIssues({
+      start: iso("2023-08-05"),
+      end: iso("2023-08-15"),
+    });
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
+    jiraApiServiceMock.fetchIssuesMinimalPaged.mockClear();
+
+    // Next UI: 03 Aug - 15 Aug => should query only 03 Aug .. < 05 Aug
+    await service.getIssues({
+      start: iso("2023-08-03"),
+      end: iso("2023-08-15"),
+    });
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
+    const jql2 = jiraApiServiceMock.fetchIssuesMinimalPaged.mock
+      .calls[0][0] as string;
+    const d2 = dateFromJql(jql2);
+    expect(d2.start).toBe("2023-08-03");
+    // Upper bound is prev earliest start (05 Aug)
+    expect(jql2).toMatch(/updated < "2023-08-05"/);
+    jiraApiServiceMock.fetchIssuesMinimalPaged.mockClear();
+
+    // Next UI: 01 Aug - 15 Aug => expected to query only 01 Aug .. < 03 Aug (new earliest is 03 Aug)
+    await service.getIssues({
+      start: iso("2023-08-01"),
+      end: iso("2023-08-15"),
+    });
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
+    const jql3 = jiraApiServiceMock.fetchIssuesMinimalPaged.mock
+      .calls[0][0] as string;
+    const d3 = dateFromJql(jql3);
+    expect(d3.start).toBe("2023-08-01");
+    expect(jql3).toMatch(/updated < "2023-08-03"/);
+  });
+
+  it("no new fetch when narrowing into already covered earlier span (bugfix #2)", async () => {
+    // First UI: 05 Aug - 15 Aug => open-ended from 05 Aug
+    await service.getIssues({
+      start: iso("2023-08-05"),
+      end: iso("2023-08-15"),
+    });
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
+    jiraApiServiceMock.fetchIssuesMinimalPaged.mockClear();
+
+    // Second UI: 10 Jul - 15 Jul => queries 10 Jul .. < 05 Aug
+    await service.getIssues({
+      start: iso("2023-07-10"),
+      end: iso("2023-07-15"),
+    });
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).toHaveBeenCalledTimes(1);
+    const jql2 = jiraApiServiceMock.fetchIssuesMinimalPaged.mock
+      .calls[0][0] as string;
+    expect(jql2).toMatch(/updated >= "2023-07-10"/);
+    expect(jql2).toMatch(/updated < "2023-08-05"/);
+
+    // Third UI: 20 Jul - 25 Jul => already covered by second query; expect no further fetch
+    jiraApiServiceMock.fetchIssuesMinimalPaged.mockClear();
+    await service.getIssues({
+      start: iso("2023-07-20"),
+      end: iso("2023-07-25"),
+    });
+    expect(jiraApiServiceMock.fetchIssuesMinimalPaged).not.toHaveBeenCalled();
+  });
+
   it("shrinking last month -> last week requires no additional query", async () => {
     await service.getIssues({
       start: iso("2023-06-01"),
