@@ -202,7 +202,7 @@ export class IssueProviderService {
     const newlyFetchedIssues: JiraIssue[] = [];
 
     for (const delta of deltas) {
-      const jql = `updated >= "${delta.start}" AND updated < "${IssueProviderService.nextDayIso(delta.end)}"${projectClause} ORDER BY updated DESC`;
+      const jql = `updated >= "${delta.start}"${projectClause} ORDER BY updated DESC`;
       try {
         // eslint-disable-next-line no-console
         console.info("[AC] delta-query", delta);
@@ -281,7 +281,7 @@ export class IssueProviderService {
     const initialCached = this.computeFromCache(period, currentUserId);
     const accumulator: JiraIssue[] = initialCached.slice();
     const seenKeys = new Set<string>(accumulator.map((it) => it.key));
-    let totalBatches: number | null = 0;
+    let totalBatches: number | null = null;
     let processedBatches = 0;
     let phase1Done = false;
     let measuredStartAt: number | null = null;
@@ -391,10 +391,7 @@ export class IssueProviderService {
     };
 
     for (const delta of deltas) {
-      const jqlParts = [
-        `updated >= "${delta.start}"`,
-        `updated < "${IssueProviderService.nextDayIso(delta.end)}"`,
-      ];
+      const jqlParts = [`updated >= "${delta.start}"`];
       if (Array.isArray(includedProjects) && includedProjects.length > 0) {
         jqlParts.push(`project in ("${includedProjects.join('", "')}")`);
       }
@@ -459,7 +456,7 @@ export class IssueProviderService {
     this.upsertIssuesIntoCache(accumulator);
 
     // Emit a final progress snapshot to ensure consumers receive completion state
-    if (onProgress && totalBatches !== null && (totalBatches as number) > 0) {
+    if (onProgress && totalBatches != null && (totalBatches as number) > 0) {
       const remainingBatches = Math.max(
         0,
         (totalBatches as number) - processedBatches,
