@@ -186,7 +186,7 @@ describe("IssueProviderService", () => {
       expect(issues[0].key).toBe("ACT-1");
     });
 
-    it("builds JQL with only time period and orders by updated when using activity source", async () => {
+    it("builds JQL with open-ended time period (no upper bound) and orders by updated when using activity source", async () => {
       // Arrange
       const period = {
         start: new Date("2023-10-01T00:00:00.000Z"),
@@ -252,10 +252,9 @@ describe("IssueProviderService", () => {
       const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock
         .calls[0][0] as string;
       expect(calledJql).toContain('updated >= "2023-10-01"');
-      expect(
-        /updated <= "2023-10-31"/.test(calledJql) ||
-          /updated < "2023-11-01"/.test(calledJql),
-      ).toBe(true);
+      // No upper bound expected for activity source
+      expect(calledJql).not.toMatch(/updated\s*<\s*"/);
+      expect(calledJql).not.toMatch(/updated\s*<=\s*"/);
       expect(calledJql).toContain("ORDER BY updated DESC");
       // Should NOT include user involvement conditions or project/issuetype exclusions
       expect(calledJql).not.toMatch(
@@ -749,7 +748,7 @@ describe("IssueProviderService", () => {
       expect(passedOptions.batchSize).toBe(minimalPageSize);
     });
 
-    it("single-day period is inclusive and returns results", async () => {
+    it("single-day period uses open-ended JQL and returns results", async () => {
       const day = new Date("2023-10-05T00:00:00.000Z");
       const period = { start: day, end: new Date("2023-10-05T23:59:59.999Z") };
       const currentUserAccountId = "me-single";
@@ -796,13 +795,10 @@ describe("IssueProviderService", () => {
       expect(issues.map((i) => i.key)).toEqual(["ONE-1"]);
       const calledJql = (jiraApiServiceMock.fetchIssuesMinimal as any).mock
         .calls[0][0] as string;
-      // We use < nextDay(end) to keep end inclusive across time zones
+      // We use open-ended JQL now
       expect(calledJql).toMatch(/updated >= "2023-10-05"/);
-      // Either <= 2023-10-05 or < 2023-10-06 is acceptable depending on implementation
-      expect(
-        /updated < "2023-10-06"/.test(calledJql) ||
-          /updated <= "2023-10-05"/.test(calledJql),
-      ).toBe(true);
+      expect(calledJql).not.toMatch(/updated\s*<\s*"/);
+      expect(calledJql).not.toMatch(/updated\s*<=\s*"/);
     });
   });
 });

@@ -18,6 +18,8 @@ export class IssueProviderService {
   private fetchedRanges: Array<{ start: string; end: string }> = [];
   // Cache of detailed issues fetched so far (used to serve requests fully covered by fetchedRanges)
   private allFetchedIssues: JiraIssue[] = [];
+  // If set, indicates we have fetched issues for all updates from this day forward (open-ended)
+  private openEndedStartISO: string | null = null;
 
   private static mergeRanges(
     ranges: Array<{ start: string; end: string }>,
@@ -202,10 +204,25 @@ export class IssueProviderService {
     const newlyFetchedIssues: JiraIssue[] = [];
 
     for (const delta of deltas) {
-      const jql = `updated >= "${delta.start}" AND updated < "${IssueProviderService.nextDayIso(delta.end)}"${projectClause} ORDER BY updated DESC`;
+      // If we already have open-ended coverage, only fetch earlier slice up to that start; skip trailing
+      if (this.openEndedStartISO && delta.start >= this.openEndedStartISO) {
+        continue;
+      }
+      const upperBoundISO = this.openEndedStartISO || null;
+      const jqlParts = [`updated >= "${delta.start}"`];
+      if (upperBoundISO) jqlParts.push(`updated < "${upperBoundISO}"`);
+      const jql = `${jqlParts.join(" AND ")}${projectClause} ORDER BY updated DESC`;
       try {
         // eslint-disable-next-line no-console
-        console.info("[AC] delta-query", delta);
+        console.info(
+          "[AC] delta-query",
+          upperBoundISO
+            ? {
+                start: delta.start,
+                end: IssueProviderService.prevDayIso(upperBoundISO),
+              }
+            : { start: delta.start },
+        );
       } catch {
         /* no-op */
       }
@@ -238,6 +255,10 @@ export class IssueProviderService {
         ...this.fetchedRanges,
         delta,
       ]);
+    }
+    // Track earliest start seen so far to represent open-ended coverage from that day forward
+    if (!this.openEndedStartISO || universe.start < this.openEndedStartISO) {
+      this.openEndedStartISO = universe.start;
     }
 
     // Upsert into cache
@@ -281,7 +302,7 @@ export class IssueProviderService {
     const initialCached = this.computeFromCache(period, currentUserId);
     const accumulator: JiraIssue[] = initialCached.slice();
     const seenKeys = new Set<string>(accumulator.map((it) => it.key));
-    let totalBatches: number | null = 0;
+    let totalBatches: number | null = null;
     let processedBatches = 0;
     let phase1Done = false;
     let measuredStartAt: number | null = null;
@@ -390,18 +411,33 @@ export class IssueProviderService {
       }
     };
 
+    let performedFetch = false;
+    const fetchedForCache: JiraIssue[] = [];
     for (const delta of deltas) {
-      const jqlParts = [
-        `updated >= "${delta.start}"`,
-        `updated < "${IssueProviderService.nextDayIso(delta.end)}"`,
-      ];
+      // If tail is already covered by a previous open-ended fetch, skip querying and rely on cache
+      if (this.openEndedStartISO && delta.start >= this.openEndedStartISO) {
+        continue;
+      }
+      performedFetch = true;
+      // If we already have open-ended coverage, only fetch earlier slice up to that start; skip trailing
+      const upperBoundISO = this.openEndedStartISO || null;
+      const jqlParts = [`updated >= "${delta.start}"`];
+      if (upperBoundISO) jqlParts.push(`updated < "${upperBoundISO}"`);
       if (Array.isArray(includedProjects) && includedProjects.length > 0) {
         jqlParts.push(`project in ("${includedProjects.join('", "')}")`);
       }
       const jql = `${jqlParts.join(" AND ")} ORDER BY updated DESC`;
       try {
         // eslint-disable-next-line no-console
-        console.info("[AC] delta-query", delta);
+        console.info(
+          "[AC] delta-query",
+          upperBoundISO
+            ? {
+                start: delta.start,
+                end: IssueProviderService.prevDayIso(upperBoundISO),
+              }
+            : { start: delta.start },
+        );
       } catch {
         /* no-op */
       }
@@ -440,7 +476,10 @@ export class IssueProviderService {
           if (keys.length === 0) return;
           await this.jiraApiService.fetchIssuesDetailedByKeys(keys, {
             batchSize: pageSize,
-            onBatch: async (issues) => processBatch(issues),
+            onBatch: async (issues) => {
+              if (issues && issues.length) fetchedForCache.push(...issues);
+              await processBatch(issues);
+            },
           });
         },
       );
@@ -450,16 +489,28 @@ export class IssueProviderService {
         delta,
       ]);
     }
+    // If we skipped all deltas due to open-ended coverage, still emit one update from cache
+    if (!performedFetch) {
+      onUpdate(initialCached.slice());
+      // No network was performed; return cached result immediately
+      return initialCached;
+    }
+    // Track earliest start seen so far to represent open-ended coverage from that day forward
+    if (!this.openEndedStartISO || universe.start < this.openEndedStartISO) {
+      this.openEndedStartISO = universe.start;
+    }
     // Mark end of Phase 1 across all deltas; start measurement window now
     phase1Done = true;
     measuredStartAt = Date.now();
     processedAtMeasureStart = processedBatches;
 
-    // Upsert full accumulator into cache once to keep BE cache consistent without per-batch overhead
+    // Upsert all fetched detailed issues to cache so later covered days can be served from cache
+    if (fetchedForCache.length > 0) this.upsertIssuesIntoCache(fetchedForCache);
+    // Also upsert the accumulator with user-activity annotations
     this.upsertIssuesIntoCache(accumulator);
 
     // Emit a final progress snapshot to ensure consumers receive completion state
-    if (onProgress && totalBatches !== null && (totalBatches as number) > 0) {
+    if (onProgress && totalBatches != null && (totalBatches as number) > 0) {
       const remainingBatches = Math.max(
         0,
         (totalBatches as number) - processedBatches,
