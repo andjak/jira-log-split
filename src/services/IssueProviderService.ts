@@ -21,6 +21,47 @@ export class IssueProviderService {
   // If set, indicates we have fetched issues for all updates from this day forward (open-ended)
   private openEndedStartISO: string | null = null;
 
+  // Fields considered as time tracking updates in Jira changelog
+  private static readonly TIME_TRACKING_FIELDS = new Set<string>([
+    "timespent",
+    "time spent",
+    "timeestimate",
+    "remaining estimate",
+    "timeoriginalestimate",
+    "original estimate",
+    "aggregatetimespent",
+    "aggregate time spent",
+    "aggregatetimeestimate",
+    "aggregate remaining estimate",
+    "aggregatetimeoriginalestimate",
+    "aggregate original estimate",
+    "worklog",
+    "worklog id",
+  ]);
+
+  private static isTimeTrackingFieldName(
+    name: string | undefined | null,
+  ): boolean {
+    if (!name) return false;
+    const n = name.toLowerCase();
+    // Explicit known fields OR heuristic tokens frequently used in Jira for time tracking
+    return (
+      IssueProviderService.TIME_TRACKING_FIELDS.has(n) ||
+      n.includes("time") ||
+      n.includes("estimate") ||
+      n.includes("worklog")
+    );
+  }
+
+  private static isTimeTrackingChange(
+    items: Array<{ field?: string }> | undefined | null,
+  ): boolean {
+    if (!Array.isArray(items) || items.length === 0) return false;
+    return items.every((it) =>
+      IssueProviderService.isTimeTrackingFieldName(it?.field),
+    );
+  }
+
   private static mergeRanges(
     ranges: Array<{ start: string; end: string }>,
   ): Array<{ start: string; end: string }> {
@@ -555,7 +596,11 @@ export class IssueProviderService {
         createdMs <= period.end.getTime();
       const byMe = h.author.accountId === currentUserId;
       const hasItems = Array.isArray(h.items) && h.items.length > 0;
-      if (inRange && byMe && hasItems) {
+      // Exclude changes that are only time tracking updates
+      const isOnlyTimeTracking = IssueProviderService.isTimeTrackingChange(
+        h.items as any,
+      );
+      if (inRange && byMe && hasItems && !isOnlyTimeTracking) {
         if (!last || createdMs > Date.parse(last)) last = h.created;
       }
     }

@@ -800,5 +800,244 @@ describe("IssueProviderService", () => {
       expect(calledJql).not.toMatch(/updated\s*<\s*"/);
       expect(calledJql).not.toMatch(/updated\s*<=\s*"/);
     });
+
+    it("excludes time-tracking-only updates within period", async () => {
+      const period = {
+        start: new Date("2025-07-16T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-tt";
+      const issue: JiraIssue = {
+        id: "1",
+        key: "TT-IGNORE",
+        fields: {
+          summary: "Only time tracking updates",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-05T10:00:00.000Z",
+              items: [
+                {
+                  field: "Remaining Estimate",
+                  fieldtype: "jira",
+                  fromString: "1d",
+                  toString: "2d",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(
+        async (key: string) => {
+          if (key === "issueSource") return "activity";
+          if (key === "includedProjects") return [];
+          return null;
+        },
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues).toHaveLength(0);
+    });
+
+    it("includes issue when a non time-tracking status change is within period", async () => {
+      const period = {
+        start: new Date("2025-07-15T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-tt2";
+      const issue: JiraIssue = {
+        id: "2",
+        key: "TT-STATUS",
+        fields: {
+          summary: "Status updated",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-05T09:00:00.000Z",
+              items: [
+                {
+                  field: "status",
+                  fieldtype: "jira",
+                  fromString: "To Do",
+                  toString: "In Progress",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(
+        async (key: string) => {
+          if (key === "issueSource") return "activity";
+          if (key === "includedProjects") return [];
+          return null;
+        },
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues.map((i) => i.key)).toEqual(["TT-STATUS"]);
+    });
+
+    it("includes issue when there is a comment by me within period even if other updates are time-tracking", async () => {
+      const period = {
+        start: new Date("2025-07-15T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const me = "me-tt3";
+      const issue: JiraIssue = {
+        id: "3",
+        key: "TT-COMMENT",
+        fields: {
+          summary: "Has comment",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+          comment: {
+            comments: [
+              {
+                id: "c1",
+                author: { accountId: me, displayName: "Me" },
+                created: "2025-08-10T12:00:00.000Z",
+              },
+            ],
+            maxResults: 1,
+            total: 1,
+            startAt: 0,
+          },
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-05T09:00:00.000Z",
+              items: [
+                {
+                  field: "Time Spent",
+                  fieldtype: "jira",
+                  fromString: "0",
+                  toString: "1h",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+      (settingsServiceMock.get as any).mockImplementation(
+        async (key: string) => {
+          if (key === "issueSource") return "activity";
+          if (key === "includedProjects") return [];
+          return null;
+        },
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([issue]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        issue,
+      ]);
+
+      const issues = await issueProviderService.getIssues(period);
+      expect(issues.map((i) => i.key)).toEqual(["TT-COMMENT"]);
+    });
+
+    it("includes issue when earlier non time-tracking change in period but excludes when only time-tracking change after", async () => {
+      const me = "me-tt4";
+      const baseIssue: JiraIssue = {
+        id: "4",
+        key: "TT-MIXED",
+        fields: {
+          summary: "Mixed changes",
+          issuetype: { iconUrl: "", name: "Task" },
+          project: { key: "P", name: "P" },
+          updated: "",
+        },
+        changelog: {
+          histories: [
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-07-10T09:00:00.000Z",
+              items: [
+                {
+                  field: "status",
+                  fieldtype: "jira",
+                  fromString: "To Do",
+                  toString: "In Progress",
+                },
+              ],
+            },
+            {
+              author: { accountId: me, displayName: "Me" },
+              created: "2025-08-05T09:00:00.000Z",
+              items: [
+                {
+                  field: "Original Estimate",
+                  fieldtype: "jira",
+                  fromString: "1d",
+                  toString: "2d",
+                },
+              ],
+            },
+          ],
+        },
+      } as any;
+
+      (settingsServiceMock.get as any).mockImplementation(
+        async (key: string) => {
+          if (key === "issueSource") return "activity";
+          if (key === "includedProjects") return [];
+          return null;
+        },
+      );
+      (jiraApiServiceMock.getCurrentUser as any).mockResolvedValue({
+        accountId: me,
+      });
+      (jiraApiServiceMock.fetchIssuesMinimal as any).mockResolvedValue([
+        baseIssue,
+      ]);
+      (jiraApiServiceMock.fetchIssuesDetailedByKeys as any).mockResolvedValue([
+        baseIssue,
+      ]);
+
+      const period1 = {
+        start: new Date("2025-07-10T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const issues1 = await issueProviderService.getIssues(period1);
+      expect(issues1.map((i) => i.key)).toEqual(["TT-MIXED"]);
+
+      const period2 = {
+        start: new Date("2025-07-16T00:00:00.000Z"),
+        end: new Date("2025-08-15T23:59:59.999Z"),
+      };
+      const issues2 = await issueProviderService.getIssues(period2);
+      // In this later period, only time-tracking update exists; should be excluded
+      expect(issues2.map((i) => i.key)).toEqual([]);
+    });
   });
 });
